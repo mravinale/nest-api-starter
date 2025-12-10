@@ -4,6 +4,7 @@ import { bearer, openAPI, jwt, organization, admin } from "better-auth/plugins";
 import { Pool } from "pg";
 import type { ConfigService } from "./config/config.service";
 import type { EmailService } from "./email/email.service";
+import { ac, roles } from "./permissions";
 
 const isTestMode = process.env.NODE_ENV === "test";
 
@@ -42,7 +43,10 @@ export const auth = betterAuth({
                 }
             },
         }),
-        admin(),
+        admin({
+            ac,
+            roles,
+        }),
     ],
     
     // Email & Password Configuration
