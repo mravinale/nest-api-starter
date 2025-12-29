@@ -1,0 +1,389 @@
+import { ForbiddenException, Injectable } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { hashPassword } from 'better-auth/crypto';
+import { DatabaseService } from '../database';
+import type { UserSession } from '@thallesp/nestjs-better-auth';
+import {
+  getAllowedRoleNamesForCreator,
+  requireActiveOrganizationIdForManager,
+} from './admin.utils';
+
+export type CreateUserInput = {
+  name: string;
+  email: string;
+  password: string;
+  role: 'admin' | 'manager' | 'member';
+  organizationId?: string;
+};
+
+@Injectable()
+export class AdminService {
+  constructor(private readonly db: DatabaseService) {}
+
+  private async assertUserInManagerOrg(userId: string, activeOrganizationId: string): Promise<void> {
+    const member = await this.db.queryOne<{ id: string }>(
+      'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
+      [activeOrganizationId, userId],
+    );
+    if (!member) {
+      throw new ForbiddenException('User is not in your organization');
+    }
+  }
+
+  async getCreateUserMetadata(platformRole: 'admin' | 'manager', activeOrganizationId: string | null) {
+    const roles = await this.db.query<{
+      name: string;
+      display_name: string;
+      description: string | null;
+      color: string | null;
+      is_system: boolean;
+    }>(
+      'SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC',
+    );
+
+    const allowedRoleNames = getAllowedRoleNamesForCreator(platformRole);
+
+    let organizations: Array<{ id: string; name: string; slug: string }> = [];
+    if (platformRole === 'admin') {
+      organizations = await this.db.query<{ id: string; name: string; slug: string }>(
+        'SELECT id, name, slug FROM organization ORDER BY name ASC',
+      );
+    } else {
+      if (!activeOrganizationId) {
+        throw new ForbiddenException('Active organization required');
+      }
+      const org = await this.db.queryOne<{ id: string; name: string; slug: string }>(
+        'SELECT id, name, slug FROM organization WHERE id = $1',
+        [activeOrganizationId],
+      );
+      organizations = org ? [org] : [];
+    }
+
+    return {
+      roles: roles.map((r) => ({
+        name: r.name,
+        displayName: r.display_name,
+        description: r.description ?? undefined,
+        color: r.color ?? undefined,
+        isSystem: r.is_system,
+      })),
+      allowedRoleNames,
+      organizations,
+    };
+  }
+
+  async updateUser(
+    input: { userId: string; name?: string },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
+    }
+
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    if (input.name !== undefined) {
+      updates.push(`name = $${idx++}`);
+      values.push(input.name);
+    }
+
+    if (updates.length === 0) {
+      throw new ForbiddenException('No data to update');
+    }
+
+    updates.push(`"updatedAt" = NOW()`);
+    values.push(input.userId);
+
+    const row = await this.db.queryOne<any>(
+      `UPDATE "user" SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, email, "emailVerified" as "emailVerified", role, image, banned, "banReason" as "banReason", "banExpires" as "banExpires", "createdAt" as "createdAt", "updatedAt" as "updatedAt"`,
+      values,
+    );
+
+    return row;
+  }
+
+  async setUserRole(
+    input: { userId: string; role: 'admin' | 'manager' | 'member' },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    const allowed = getAllowedRoleNamesForCreator(platformRole);
+    if (!allowed.includes(input.role)) {
+      throw new ForbiddenException('Role not allowed');
+    }
+
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
+    }
+
+    await this.db.transaction(async (query) => {
+      await query('UPDATE "user" SET role = $1, "updatedAt" = NOW() WHERE id = $2', [
+        input.role,
+        input.userId,
+      ]);
+
+      if (input.role === 'admin') {
+        await query('DELETE FROM member WHERE "userId" = $1', [input.userId]);
+      } else {
+        const orgId = activeOrganizationId;
+        if (!orgId) {
+          throw new ForbiddenException('Active organization required');
+        }
+        const existingMember = await query(
+          'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
+          [orgId, input.userId],
+        );
+        if (existingMember.length > 0) {
+          await query(
+            'UPDATE member SET role = $1 WHERE "organizationId" = $2 AND "userId" = $3',
+            [input.role, orgId, input.userId],
+          );
+        } else {
+          await query(
+            'INSERT INTO member (id, "organizationId", "userId", role, "createdAt") VALUES ($1, $2, $3, $4, NOW())',
+            [randomUUID(), orgId, input.userId, input.role],
+          );
+        }
+      }
+    });
+
+    const updated = await this.db.queryOne<any>(
+      'SELECT id, name, email, "emailVerified" as "emailVerified", role, image, banned, "banReason" as "banReason", "banExpires" as "banExpires", "createdAt" as "createdAt", "updatedAt" as "updatedAt" FROM "user" WHERE id = $1',
+      [input.userId],
+    );
+    return updated;
+  }
+
+  async banUser(
+    input: { userId: string; banReason?: string },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
+    }
+
+    await this.db.query(
+      'UPDATE "user" SET banned = true, "banReason" = $1, "updatedAt" = NOW() WHERE id = $2',
+      [input.banReason ?? null, input.userId],
+    );
+    return { success: true };
+  }
+
+  async unbanUser(
+    input: { userId: string },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
+    }
+
+    await this.db.query(
+      'UPDATE "user" SET banned = false, "banReason" = NULL, "banExpires" = NULL, "updatedAt" = NOW() WHERE id = $1',
+      [input.userId],
+    );
+    return { success: true };
+  }
+
+  async setUserPassword(
+    input: { userId: string; newPassword: string },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
+    }
+
+    const hashed = await hashPassword(input.newPassword);
+    await this.db.query(
+      'UPDATE account SET password = $1, "updatedAt" = NOW() WHERE "userId" = $2 AND "providerId" = $3',
+      [hashed, input.userId, 'credential'],
+    );
+    return { status: true };
+  }
+
+  async removeUser(
+    input: { userId: string },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
+    }
+    await this.db.query('DELETE FROM "user" WHERE id = $1', [input.userId]);
+    return { success: true };
+  }
+
+  async revokeSession(
+    input: { sessionToken: string },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      const session = await this.db.queryOne<{ userId: string }>(
+        'SELECT "userId" as "userId" FROM session WHERE token = $1',
+        [input.sessionToken],
+      );
+      if (!session) return { success: true };
+      await this.assertUserInManagerOrg(session.userId, activeOrganizationId);
+    }
+    await this.db.query('DELETE FROM session WHERE token = $1', [input.sessionToken]);
+    return { success: true };
+  }
+
+  async revokeAllSessions(
+    input: { userId: string },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
+    }
+    await this.db.query('DELETE FROM session WHERE "userId" = $1', [input.userId]);
+    return { success: true };
+  }
+
+  async listUsers(params: {
+    limit: number;
+    offset: number;
+    searchValue?: string;
+    activeOrganizationId: string | null;
+    platformRole: 'admin' | 'manager';
+  }) {
+    const { limit, offset, searchValue, platformRole, activeOrganizationId } = params;
+
+    const where: string[] = [];
+    const values: unknown[] = [];
+
+    if (searchValue) {
+      values.push(`%${searchValue}%`);
+      where.push(`(u.name ILIKE $${values.length} OR u.email ILIKE $${values.length})`);
+    }
+
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      values.push(activeOrganizationId);
+      where.push(`EXISTS (SELECT 1 FROM member m WHERE m."userId" = u.id AND m."organizationId" = $${values.length})`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const users = await this.db.query<any>(
+      `SELECT u.id, u.name, u.email, u."emailVerified" as "emailVerified", u.role, u.image, u.banned, u."banReason" as "banReason", u."banExpires" as "banExpires", u."createdAt" as "createdAt", u."updatedAt" as "updatedAt"
+       FROM "user" u
+       ${whereSql}
+       ORDER BY u."createdAt" DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      values,
+    );
+
+    const totalRow = await this.db.queryOne<{ count: string }>(
+      `SELECT COUNT(*)::text as count FROM "user" u ${whereSql}`,
+      values,
+    );
+
+    return {
+      data: users,
+      total: totalRow ? parseInt(totalRow.count, 10) : 0,
+      limit,
+      offset,
+    };
+  }
+
+  async createUser(input: CreateUserInput, platformRole: 'admin' | 'manager', activeOrganizationId: string | null) {
+    const allowed = getAllowedRoleNamesForCreator(platformRole);
+    if (!allowed.includes(input.role)) {
+      throw new ForbiddenException('Role not allowed');
+    }
+
+    const enforcedActiveOrgId = requireActiveOrganizationIdForManager(platformRole, {
+      session: { activeOrganizationId: activeOrganizationId ?? undefined },
+    } as unknown as UserSession);
+
+    const organizationIdToUse = input.role === 'admin' ? undefined : input.organizationId;
+
+    if (input.role !== 'admin') {
+      if (!organizationIdToUse) {
+        throw new ForbiddenException('Organization is required for non-admin users');
+      }
+      if (platformRole === 'manager' && enforcedActiveOrgId && organizationIdToUse !== enforcedActiveOrgId) {
+        throw new ForbiddenException('Managers can only assign users to their active organization');
+      }
+    }
+
+    const userId = randomUUID();
+    const accountId = randomUUID();
+    const hashed = await hashPassword(input.password);
+
+    await this.db.transaction(async (query) => {
+      const existing = await query('SELECT id FROM "user" WHERE email = $1', [input.email.toLowerCase()]);
+      if (existing.length > 0) {
+        throw new ForbiddenException('User already exists');
+      }
+
+      await query(
+        `INSERT INTO "user" (id, name, email, "emailVerified", image, "createdAt", "updatedAt", role, banned)
+         VALUES ($1, $2, $3, false, NULL, NOW(), NOW(), $4, false)`,
+        [userId, input.name, input.email.toLowerCase(), input.role],
+      );
+
+      await query(
+        `INSERT INTO account (id, "accountId", "providerId", "userId", password, "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+        [accountId, userId, 'credential', userId, hashed],
+      );
+
+      if (organizationIdToUse) {
+        await query(
+          `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
+           VALUES ($1, $2, $3, $4, NOW())`,
+          [randomUUID(), organizationIdToUse, userId, input.role],
+        );
+      }
+    });
+
+    const created = await this.db.queryOne<any>(
+      'SELECT id, name, email, "emailVerified" as "emailVerified", role, image, banned, "banReason" as "banReason", "banExpires" as "banExpires", "createdAt" as "createdAt", "updatedAt" as "updatedAt" FROM "user" WHERE id = $1',
+      [userId],
+    );
+
+    return created;
+  }
+
+  async listUserSessions(params: {
+    userId: string;
+    platformRole: 'admin' | 'manager';
+    activeOrganizationId: string | null;
+  }) {
+    const { userId, platformRole, activeOrganizationId } = params;
+
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      const member = await this.db.queryOne<{ id: string }>(
+        'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
+        [activeOrganizationId, userId],
+      );
+      if (!member) {
+        throw new ForbiddenException('User is not in your organization');
+      }
+    }
+
+    const sessions = await this.db.query<any>(
+      'SELECT id, "userId" as "userId", token, "expiresAt" as "expiresAt", "createdAt" as "createdAt", "updatedAt" as "updatedAt", "ipAddress" as "ipAddress", "userAgent" as "userAgent" FROM session WHERE "userId" = $1 ORDER BY "createdAt" DESC',
+      [userId],
+    );
+    return sessions;
+  }
+}

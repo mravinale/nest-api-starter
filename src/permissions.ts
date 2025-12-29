@@ -9,8 +9,8 @@ import { defaultStatements, adminAc } from "better-auth/plugins/admin/access";
  */
 export const statement = {
   ...defaultStatements,
-  // Custom resources can be added here
-  // e.g., project: ["create", "read", "update", "delete"],
+  organization: ["list", "get", "update", "invite"],
+  role: ["list", "get"],
 } as const;
 
 /**
@@ -29,15 +29,17 @@ export const adminRole = ac.newRole({
   ...adminAc.statements,
 });
 
-// User role - basic user with no admin permissions
-export const userRole = ac.newRole({
-  // Users have no admin permissions by default
+// Manager role - can manage users/sessions within their organization
+export const managerRole = ac.newRole({
+  user: ["create", "list", "get", "update", "ban", "set-role", "set-password"],
+  session: ["list", "revoke"],
+  organization: ["list", "get", "update", "invite"],
+  role: ["list", "get"],
 });
 
-// Moderator role - can manage users but not delete or impersonate
-export const moderatorRole = ac.newRole({
-  user: ["list", "ban"],
-  session: ["list", "revoke"],
+// Member role - basic org member
+export const memberRole = ac.newRole({
+  role: ["list", "get"],
 });
 
 /**
@@ -45,8 +47,8 @@ export const moderatorRole = ac.newRole({
  */
 export const roles = {
   admin: adminRole,
-  user: userRole,
-  moderator: moderatorRole,
+  manager: managerRole,
+  member: memberRole,
 } as const;
 
 /**
@@ -58,15 +60,15 @@ export const roleMetadata = {
     description: "Full access to all resources and actions",
     color: "red",
   },
-  user: {
-    name: "User",
-    description: "Basic user with no administrative permissions",
-    color: "gray",
-  },
-  moderator: {
-    name: "Moderator",
-    description: "Can manage users and sessions, but cannot delete or impersonate",
+  manager: {
+    name: "Manager",
+    description: "Can manage everything within their organization",
     color: "blue",
+  },
+  member: {
+    name: "Member",
+    description: "Basic access within an organization",
+    color: "gray",
   },
 } as const;
 

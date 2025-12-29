@@ -10,6 +10,7 @@ import { DatabaseModule } from './database';
 import { RbacModule } from './rbac';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { OrganizationModule } from './organization/organization.module';
+import { AdminModule } from './admin';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { OrganizationModule } from './organization/organization.module';
     RbacModule,
     PlatformAdminModule,
     OrganizationModule,
+    AdminModule,
     AuthModule.forRoot({ auth }),
   ],
   controllers: [AppController],
