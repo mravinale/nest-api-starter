@@ -153,9 +153,9 @@ describe('AdminOrganizationsService', () => {
     it('should return members with user info', async () => {
       const mockMember = {
         id: 'member-1',
-        user_id: 'user-1',
+        userId: 'user-1',
         role: 'admin',
-        created_at: new Date(),
+        createdAt: new Date(),
         user_name: 'John Doe',
         user_email: 'john@example.com',
         user_image: null,
@@ -168,6 +168,54 @@ describe('AdminOrganizationsService', () => {
       expect(result[0].userId).toBe('user-1');
       expect(result[0].user.name).toBe('John Doe');
       expect(result[0].user.email).toBe('john@example.com');
+    });
+  });
+
+  describe('getRoles', () => {
+    const mockRoles = [
+      { name: 'admin', display_name: 'Admin', description: 'Platform admin', color: '#ff0000', is_system: true },
+      { name: 'manager', display_name: 'Manager', description: 'Org manager', color: '#00ff00', is_system: true },
+      { name: 'member', display_name: 'Member', description: 'Regular user', color: '#0000ff', is_system: true },
+    ];
+
+    it('should return all roles from database', async () => {
+      dbService.query.mockResolvedValue(mockRoles);
+
+      const result = await service.getRoles();
+
+      expect(result.roles).toHaveLength(3);
+      expect(result.roles[0].name).toBe('admin');
+      expect(result.roles[0].displayName).toBe('Admin');
+      expect(result.roles[0].description).toBe('Platform admin');
+      expect(result.roles[0].color).toBe('#ff0000');
+      expect(result.roles[0].isSystem).toBe(true);
+    });
+
+    it('should return assignableRoles as array of role names', async () => {
+      dbService.query.mockResolvedValue(mockRoles);
+
+      const result = await service.getRoles();
+
+      expect(result.assignableRoles).toEqual(['admin', 'manager', 'member']);
+    });
+
+    it('should handle empty roles table', async () => {
+      dbService.query.mockResolvedValue([]);
+
+      const result = await service.getRoles();
+
+      expect(result.roles).toHaveLength(0);
+      expect(result.assignableRoles).toEqual([]);
+    });
+
+    it('should query roles table with correct SQL', async () => {
+      dbService.query.mockResolvedValue([]);
+
+      await service.getRoles();
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        'SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC'
+      );
     });
   });
 });

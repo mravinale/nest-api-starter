@@ -1,9 +1,18 @@
 {
-  "moduleFileExtensions": ["js", "json", "ts"],
+  "moduleFileExtensions": ["js", "json", "ts", "mjs"],
   "rootDir": ".",
   "testEnvironment": "node",
   "testRegex": "\\.e2e-spec\\.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
-  }
+    "^.+\\.(t|j)s$": ["ts-jest", { "useESM": true }]
+  },
+  "extensionsToTreatAsEsm": [".ts"],
+  "moduleNameMapper": {
+    "^(\\.{1,2}/.*)\\.js$": "$1"
+  },
+  "transformIgnorePatterns": [
+    "node_modules/(?!(better-auth|@better-auth|better-call|@thallesp)/)"
+  ],
+  "setupFiles": ["<rootDir>/setup.ts"],
+  "globalTeardown": "<rootDir>/teardown.ts"
 }

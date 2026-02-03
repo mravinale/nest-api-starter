@@ -10,6 +10,7 @@ export class RbacMigrationService implements OnModuleInit {
 
   async onModuleInit() {
     await this.runMigrations();
+    await this.migrateOldRoleNames();
     await this.seedDefaultData();
   }
 
@@ -52,6 +53,35 @@ export class RbacMigrationService implements OnModuleInit {
     `);
 
     console.log('✅ RBAC tables created');
+  }
+
+  /**
+   * Migrate old role names to unified role model
+   */
+  async migrateOldRoleNames(): Promise<void> {
+    // Rename 'moderator' -> 'manager' if it exists
+    await this.db.query(`
+      UPDATE roles SET name = 'manager', display_name = 'Manager', 
+        description = 'Organization manager with full access within their assigned organization',
+        updated_at = NOW()
+      WHERE name = 'moderator' AND NOT EXISTS (SELECT 1 FROM roles WHERE name = 'manager')
+    `);
+    
+    // Rename 'user' -> 'member' if it exists (and 'member' doesn't exist)
+    await this.db.query(`
+      UPDATE roles SET name = 'member', display_name = 'Member',
+        description = 'Organization member with basic access within their assigned organization',
+        updated_at = NOW()
+      WHERE name = 'user' AND NOT EXISTS (SELECT 1 FROM roles WHERE name = 'member')
+    `);
+
+    // Update user table: rename 'moderator' role to 'manager'
+    await this.db.query(`UPDATE "user" SET role = 'manager' WHERE role = 'moderator'`);
+    
+    // Update user table: rename 'user' role to 'member'
+    await this.db.query(`UPDATE "user" SET role = 'member' WHERE role = 'user'`);
+
+    console.log('✅ Old role names migrated to unified model');
   }
 
   /**
@@ -128,7 +158,12 @@ export class RbacMigrationService implements OnModuleInit {
       await this.db.query(
         `INSERT INTO roles (name, display_name, description, color, is_system)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (name) DO NOTHING`,
+         ON CONFLICT (name) DO UPDATE SET
+           display_name = EXCLUDED.display_name,
+           description = EXCLUDED.description,
+           color = EXCLUDED.color,
+           is_system = EXCLUDED.is_system,
+           updated_at = NOW()`,
         [role.name, role.displayName, role.description, role.color, role.isSystem],
       );
     }

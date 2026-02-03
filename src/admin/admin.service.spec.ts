@@ -3,6 +3,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException } from '@nestjs/common';
 import { AdminService, CreateUserInput } from './admin.service';
 import { DatabaseService } from '../database';
+import { EmailService } from '../email/email.service';
+import { ConfigService } from '../config/config.service';
 
 describe('AdminService', () => {
   let service: AdminService;
@@ -37,10 +39,25 @@ describe('AdminService', () => {
       transaction: jest.fn(),
     };
 
+    const mockEmailService = {
+      sendEmailVerification: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      sendPasswordResetEmail: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      sendOrganizationInvitation: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    };
+
+    const mockConfigService = {
+      getBaseUrl: jest.fn().mockReturnValue('http://localhost:3000'),
+      getFeUrl: jest.fn().mockReturnValue('http://localhost:5173'),
+      getAuthSecret: jest.fn().mockReturnValue('test-secret-key-for-jwt-signing'),
+      isTestMode: jest.fn().mockReturnValue(true),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
         { provide: DatabaseService, useValue: mockDbService },
+        { provide: EmailService, useValue: mockEmailService },
+        { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
 
@@ -181,6 +198,44 @@ describe('AdminService', () => {
       dbService.query.mockResolvedValueOnce([]);
       const result = await service.removeUser({ userId: 'user-1' }, 'admin', null);
       expect(result.success).toBe(true);
+    });
+  });
+
+
+  describe('removeUsers (bulk delete)', () => {
+    it('should allow admin to bulk delete users', async () => {
+      dbService.query.mockResolvedValueOnce([]);
+      const result = await service.removeUsers({ userIds: ['user-1', 'user-2', 'user-3'] }, 'admin', null);
+      expect(result.success).toBe(true);
+      expect(result.deletedCount).toBe(3);
+    });
+
+    it('should return early for empty userIds array', async () => {
+      const result = await service.removeUsers({ userIds: [] }, 'admin', null);
+      expect(result.success).toBe(true);
+      expect(result.deletedCount).toBe(0);
+    });
+
+    it('should throw ForbiddenException for manager without active organization', async () => {
+      await expect(
+        service.removeUsers({ userIds: ['user-1', 'user-2'] }, 'manager', null)
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw ForbiddenException when manager tries to delete user outside org', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+      await expect(
+        service.removeUsers({ userIds: ['user-1'] }, 'manager', 'org-1')
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should allow manager to bulk delete users in their organization', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ id: 'member-1' });
+      dbService.queryOne.mockResolvedValueOnce({ id: 'member-2' });
+      dbService.query.mockResolvedValueOnce([]);
+      const result = await service.removeUsers({ userIds: ['user-1', 'user-2'] }, 'manager', 'org-1');
+      expect(result.success).toBe(true);
+      expect(result.deletedCount).toBe(2);
     });
   });
 

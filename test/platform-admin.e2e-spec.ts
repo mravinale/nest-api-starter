@@ -34,10 +34,10 @@ describe('Platform Admin (e2e)', () => {
   });
 
   describe('/api/platform-admin/organizations (GET)', () => {
-    it('should return 403 without authentication', () => {
+    it('should return 401 without authentication', () => {
       return request(app.getHttpServer())
         .get('/api/platform-admin/organizations')
-        .expect(403);
+        .expect(401);
     });
 
     // Note: To test with authentication, you would need to:
@@ -60,27 +60,27 @@ describe('Platform Admin (e2e)', () => {
   });
 
   describe('/api/platform-admin/organizations/:id (GET)', () => {
-    it('should return 403 without authentication', () => {
+    it('should return 401 without authentication', () => {
       return request(app.getHttpServer())
         .get('/api/platform-admin/organizations/test-org-id')
-        .expect(403);
+        .expect(401);
     });
   });
 
   describe('/api/platform-admin/organizations/:id (PUT)', () => {
-    it('should return 403 without authentication', () => {
+    it('should return 401 without authentication', () => {
       return request(app.getHttpServer())
         .put('/api/platform-admin/organizations/test-org-id')
         .send({ name: 'Updated Name' })
-        .expect(403);
+        .expect(401);
     });
   });
 
   describe('/api/platform-admin/organizations/:id (DELETE)', () => {
-    it('should return 403 without authentication', () => {
+    it('should return 401 without authentication', () => {
       return request(app.getHttpServer())
         .delete('/api/platform-admin/organizations/test-org-id')
-        .expect(403);
+        .expect(401);
     });
   });
 });
@@ -102,37 +102,37 @@ describe('RBAC Endpoints Protection (e2e)', () => {
   });
 
   describe('/api/rbac/roles (POST)', () => {
-    it('should return 403 without admin role', () => {
+    it('should return 401 without admin role', () => {
       return request(app.getHttpServer())
         .post('/api/rbac/roles')
         .send({ name: 'test-role', displayName: 'Test Role' })
-        .expect(403);
+        .expect(401);
     });
   });
 
   describe('/api/rbac/roles/:id (PUT)', () => {
-    it('should return 403 without admin role', () => {
+    it('should return 401 without admin role', () => {
       return request(app.getHttpServer())
         .put('/api/rbac/roles/test-id')
         .send({ displayName: 'Updated Role' })
-        .expect(403);
+        .expect(401);
     });
   });
 
   describe('/api/rbac/roles/:id (DELETE)', () => {
-    it('should return 403 without admin role', () => {
+    it('should return 401 without admin role', () => {
       return request(app.getHttpServer())
         .delete('/api/rbac/roles/test-id')
-        .expect(403);
+        .expect(401);
     });
   });
 
   describe('/api/rbac/roles/:id/permissions (PUT)', () => {
-    it('should return 403 without admin role', () => {
+    it('should return 401 without admin role', () => {
       return request(app.getHttpServer())
         .put('/api/rbac/roles/test-id/permissions')
         .send({ permissionIds: [] })
-        .expect(403);
+        .expect(401);
     });
   });
 });
@@ -154,19 +154,19 @@ describe('Org Impersonation (e2e)', () => {
   });
 
   describe('/api/organization/:orgId/impersonate (POST)', () => {
-    it('should return 403 without authentication', () => {
+    it('should return 401 without authentication', () => {
       return request(app.getHttpServer())
         .post('/api/organization/test-org-id/impersonate')
         .send({ userId: 'target-user-id' })
-        .expect(403);
+        .expect(401);
     });
   });
 
   describe('/api/organization/stop-impersonating (POST)', () => {
-    it('should return 403 without session token', () => {
+    it('should return 401 without session token', () => {
       return request(app.getHttpServer())
         .post('/api/organization/stop-impersonating')
-        .expect(403);
+        .expect(401);
     });
   });
 });

@@ -23,17 +23,20 @@ export class EmailService {
   }
 
   async sendEmail({ to, subject, html, text }: EmailPayload): Promise<void> {
+    console.log('📧 [EmailService] sendEmail called:', { to, subject, isTestMode: this.configService.isTestMode(), hasResendClient: !!this.resendClient });
+    
     if (this.configService.isTestMode()) {
-      console.log('[TEST MODE] Email skipped:', { to, subject });
+      console.log('⚠️ [TEST MODE] Email skipped:', { to, subject });
       return;
     }
 
     if (!this.resendClient) {
-      console.log('[NO API KEY] Email logged only:', { to, subject });
+      console.log('⚠️ [NO API KEY] Email logged only:', { to, subject });
       return;
     }
 
     try {
+      console.log('📤 [EmailService] Sending email via Resend:', { to, subject, from: this.configService.getFromEmail() });
       const { data, error } = await this.resendClient.emails.send({
         from: this.configService.getFromEmail(),
         to,
@@ -43,13 +46,13 @@ export class EmailService {
       });
 
       if (error) {
-        console.error('Error sending email:', error);
+        console.error('❌ [EmailService] Error sending email:', error);
         throw new Error('Failed to send email');
       }
 
-      console.log('Email sent successfully:', data);
+      console.log('✅ [EmailService] Email sent successfully:', data);
     } catch (error) {
-      console.error('Error sending email:', error);
+      console.error('❌ [EmailService] Exception sending email:', error);
       throw error;
     }
   }
@@ -58,6 +61,8 @@ export class EmailService {
     user,
     url,
   }: EmailVerificationPayload): Promise<void> {
+    console.log('📧 [EmailService] sendEmailVerification called:', { email: user.email, url });
+    
     const subject = 'Verify your email';
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">

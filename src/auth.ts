@@ -69,6 +69,13 @@ export const auth = betterAuth({
         autoSignInAfterVerification: true,
         expiresIn: 3600, // 1 hour
         sendVerificationEmail: async (payload) => {
+            console.log('📧 [Auth] sendVerificationEmail called:', { 
+                email: payload.user.email, 
+                hasEmailService: !!emailServiceInstance,
+                isTestMode,
+                sendOnSignUp: !isTestMode
+            });
+            
             // Modify the callbackURL to point to the frontend
             const feUrl = process.env.FE_URL || "http://localhost:5173";
             const urlObj = new URL(payload.url);
@@ -76,10 +83,11 @@ export const auth = betterAuth({
             const modifiedPayload = { ...payload, url: urlObj.toString() };
             
             if (emailServiceInstance) {
+                console.log('✅ [Auth] Calling emailServiceInstance.sendEmailVerification');
                 await emailServiceInstance.sendEmailVerification(modifiedPayload as any);
             } else {
-                console.log("[Email Verification] Email (no service):", payload.user.email);
-                console.log("[Email Verification] URL:", modifiedPayload.url);
+                console.log("⚠️ [Auth] Email service not initialized - Email (no service):", payload.user.email);
+                console.log("⚠️ [Auth] URL:", modifiedPayload.url);
             }
         },
     },

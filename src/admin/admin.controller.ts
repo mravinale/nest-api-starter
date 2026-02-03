@@ -7,6 +7,7 @@ import {
   Delete,
   Query,
   Param,
+  UseGuards,
 } from '@nestjs/common';
 import { Session } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
@@ -15,12 +16,15 @@ import {
   requireAdminOrManager,
   requireActiveOrganizationIdForManager,
 } from './admin.utils';
+import { PermissionsGuard, RequirePermissions } from '../common';
 
 @Controller('api/admin/users')
+@UseGuards(PermissionsGuard)
 export class AdminUsersController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get('create-metadata')
+  @RequirePermissions('user:read')
   async getCreateMetadata(@Session() session: UserSession) {
     const platformRole = requireAdminOrManager(session);
     const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);
@@ -28,6 +32,7 @@ export class AdminUsersController {
   }
 
   @Get()
+  @RequirePermissions('user:read')
   async list(
     @Session() session: UserSession,
     @Query('limit') limit = '10',
@@ -47,6 +52,7 @@ export class AdminUsersController {
   }
 
   @Post()
+  @RequirePermissions('user:create')
   async create(
     @Session() session: UserSession,
     @Body()
@@ -75,6 +81,7 @@ export class AdminUsersController {
   }
 
   @Get(':userId/sessions')
+  @RequirePermissions('session:read')
   async listSessions(@Session() session: UserSession, @Param('userId') userId: string) {
     const platformRole = requireAdminOrManager(session);
     const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);
@@ -86,6 +93,7 @@ export class AdminUsersController {
   }
 
   @Put(':userId')
+  @RequirePermissions('user:update')
   async update(
     @Session() session: UserSession,
     @Param('userId') userId: string,
@@ -97,6 +105,7 @@ export class AdminUsersController {
   }
 
   @Put(':userId/role')
+  @RequirePermissions('user:set-role')
   async setRole(
     @Session() session: UserSession,
     @Param('userId') userId: string,
@@ -108,6 +117,7 @@ export class AdminUsersController {
   }
 
   @Post(':userId/ban')
+  @RequirePermissions('user:ban')
   async ban(
     @Session() session: UserSession,
     @Param('userId') userId: string,
@@ -119,6 +129,7 @@ export class AdminUsersController {
   }
 
   @Post(':userId/unban')
+  @RequirePermissions('user:ban')
   async unban(@Session() session: UserSession, @Param('userId') userId: string) {
     const platformRole = requireAdminOrManager(session);
     const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);
@@ -126,6 +137,7 @@ export class AdminUsersController {
   }
 
   @Post(':userId/password')
+  @RequirePermissions('user:set-password')
   async setPassword(
     @Session() session: UserSession,
     @Param('userId') userId: string,
@@ -137,13 +149,23 @@ export class AdminUsersController {
   }
 
   @Delete(':userId')
+  @RequirePermissions('user:delete')
   async remove(@Session() session: UserSession, @Param('userId') userId: string) {
     const platformRole = requireAdminOrManager(session);
     const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);
     return this.adminService.removeUser({ userId }, platformRole, activeOrgId);
   }
 
+  @Post('bulk-delete')
+  @RequirePermissions('user:delete')
+  async bulkRemove(@Session() session: UserSession, @Body() body: { userIds: string[] }) {
+    const platformRole = requireAdminOrManager(session);
+    const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);
+    return this.adminService.removeUsers({ userIds: body.userIds }, platformRole, activeOrgId);
+  }
+
   @Post('sessions/revoke')
+  @RequirePermissions('session:revoke')
   async revokeSession(@Session() session: UserSession, @Body() body: { sessionToken: string }) {
     const platformRole = requireAdminOrManager(session);
     const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);
@@ -151,6 +173,7 @@ export class AdminUsersController {
   }
 
   @Post(':userId/sessions/revoke-all')
+  @RequirePermissions('session:revoke')
   async revokeAll(@Session() session: UserSession, @Param('userId') userId: string) {
     const platformRole = requireAdminOrManager(session);
     const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);

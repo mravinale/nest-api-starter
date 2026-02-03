@@ -1,7 +1,10 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { hashPassword } from 'better-auth/crypto';
+import * as jose from 'jose';
 import { DatabaseService } from '../database';
+import { EmailService } from '../email/email.service';
+import { ConfigService } from '../config/config.service';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
 import {
   getAllowedRoleNamesForCreator,
@@ -18,7 +21,11 @@ export type CreateUserInput = {
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly emailService: EmailService,
+    private readonly configService: ConfigService,
+  ) {}
 
   private async assertUserInManagerOrg(userId: string, activeOrganizationId: string): Promise<void> {
     const member = await this.db.queryOne<{ id: string }>(
@@ -41,7 +48,10 @@ export class AdminService {
       'SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC',
     );
 
+    console.log('DEBUG - platformRole:', platformRole);
+    console.log('DEBUG - roles from DB:', roles.map(r => r.name));
     const allowedRoleNames = getAllowedRoleNamesForCreator(platformRole);
+    console.log('DEBUG - allowedRoleNames:', allowedRoleNames);
 
     let organizations: Array<{ id: string; name: string; slug: string }> = [];
     if (platformRole === 'admin') {
@@ -224,6 +234,27 @@ export class AdminService {
     return { success: true };
   }
 
+  async removeUsers(
+    input: { userIds: string[] },
+    platformRole: 'admin' | 'manager',
+    activeOrganizationId: string | null,
+  ) {
+    if (input.userIds.length === 0) {
+      return { success: true, deletedCount: 0 };
+    }
+
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      for (const userId of input.userIds) {
+        await this.assertUserInManagerOrg(userId, activeOrganizationId);
+      }
+    }
+
+    const placeholders = input.userIds.map((_, i) => `$${i + 1}`).join(', ');
+    await this.db.query(`DELETE FROM "user" WHERE id IN (${placeholders})`, input.userIds);
+    return { success: true, deletedCount: input.userIds.length };
+  }
+
   async revokeSession(
     input: { sessionToken: string },
     platformRole: 'admin' | 'manager',
@@ -358,6 +389,35 @@ export class AdminService {
       'SELECT id, name, email, "emailVerified" as "emailVerified", role, image, banned, "banReason" as "banReason", "banExpires" as "banExpires", "createdAt" as "createdAt", "updatedAt" as "updatedAt" FROM "user" WHERE id = $1',
       [userId],
     );
+
+    // Send verification email
+    try {
+      // Generate JWT token like Better Auth does
+      const secret = new TextEncoder().encode(this.configService.getAuthSecret());
+      const expiresIn = 3600; // 1 hour in seconds
+      
+      const verificationToken = await new jose.SignJWT({ email: input.email.toLowerCase() })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setExpirationTime(`${expiresIn}s`)
+        .setIssuedAt()
+        .sign(secret);
+      
+      // Build verification URL
+      const baseUrl = this.configService.getBaseUrl();
+      const feUrl = this.configService.getFeUrl();
+      const verificationUrl = `${baseUrl}/api/auth/verify-email?token=${verificationToken}&callbackURL=${encodeURIComponent(feUrl)}`;
+      
+      console.log('📧 [AdminService] Sending verification email to:', input.email);
+      await this.emailService.sendEmailVerification({
+        user: { id: userId, email: input.email, name: input.name },
+        url: verificationUrl,
+        token: verificationToken,
+      });
+      console.log('✅ [AdminService] Verification email sent successfully');
+    } catch (error) {
+      console.error('❌ [AdminService] Failed to send verification email:', error);
+      // Don't throw - user was created successfully, email failure shouldn't block
+    }
 
     return created;
   }
