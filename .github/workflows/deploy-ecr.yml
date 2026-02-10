@@ -48,11 +48,11 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          cat > Dockerrun.aws.json << EOF
+          cat > Dockerrun.aws.json <<'EOFTEMPLATE'
           {
             "AWSEBDockerrunVersion": "1",
             "Image": {
-              "Name": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "Name": "IMAGE_PLACEHOLDER",
               "Update": "true"
             },
             "Ports": [
@@ -62,7 +62,8 @@ jobs:
               }
             ]
           }
-          EOF
+          EOFTEMPLATE
+          sed -i "s|IMAGE_PLACEHOLDER|$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" Dockerrun.aws.json
           cat Dockerrun.aws.json
 
       - name: Deploy to Elastic Beanstalk
