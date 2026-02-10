@@ -17,4 +17,14 @@ export class AppController {
   getProfile(@Session() session: UserSession) {
     return session;
   }
+
+  @Get('health')
+  @AllowAnonymous()
+  healthCheck() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    };
+  }
 }
