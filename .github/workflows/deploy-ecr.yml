@@ -1,4 +1,4 @@
-name: Deploy to ECR
+name: Deploy to ECR and Elastic Beanstalk
 
 on:
   push:
@@ -8,6 +8,8 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: tierone/nestjs-api-starter
+  EB_APPLICATION: nextjs-api-starter
+  EB_ENVIRONMENT: nextjs-api-starter
 
 jobs:
   deploy:
@@ -39,3 +41,47 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "registry=$ECR_REGISTRY" >> $GITHUB_OUTPUT
+
+      - name: Generate Dockerrun.aws.json
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          cat > Dockerrun.aws.json << EOF
+          {
+            "AWSEBDockerrunVersion": "1",
+            "Image": {
+              "Name": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "Update": "true"
+            },
+            "Ports": [
+              {
+                "ContainerPort": 3000,
+                "HostPort": 80
+              }
+            ]
+          }
+          EOF
+          cat Dockerrun.aws.json
+
+      - name: Deploy to Elastic Beanstalk
+        run: |
+          VERSION_LABEL="deploy-${{ github.sha }}-$(date +%s)"
+          
+          # Create application version with Dockerrun.aws.json
+          zip -r deploy.zip Dockerrun.aws.json
+          
+          aws s3 cp deploy.zip s3://elasticbeanstalk-${{ env.AWS_REGION }}-${{ secrets.AWS_ACCOUNT_ID }}/${{ env.EB_APPLICATION }}/$VERSION_LABEL.zip
+          
+          aws elasticbeanstalk create-application-version \
+            --application-name ${{ env.EB_APPLICATION }} \
+            --version-label $VERSION_LABEL \
+            --source-bundle S3Bucket=elasticbeanstalk-${{ env.AWS_REGION }}-${{ secrets.AWS_ACCOUNT_ID }},S3Key=${{ env.EB_APPLICATION }}/$VERSION_LABEL.zip
+          
+          aws elasticbeanstalk update-environment \
+            --application-name ${{ env.EB_APPLICATION }} \
+            --environment-name ${{ env.EB_ENVIRONMENT }} \
+            --version-label $VERSION_LABEL
+          
+          echo "🚀 Deployment initiated for version $VERSION_LABEL"
