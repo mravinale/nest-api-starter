@@ -9,15 +9,41 @@ export class RbacMigrationService implements OnModuleInit {
   constructor(private readonly db: DatabaseService) {}
 
   async onModuleInit() {
-    await this.runMigrations();
-    await this.migrateOldRoleNames();
-    await this.seedDefaultData();
+    await this.runTrackedMigrations();
+  }
+
+  /**
+   * Run RBAC migrations with tracking (only runs new migrations)
+   */
+  async runTrackedMigrations(): Promise<void> {
+    const migrations = [
+      { name: 'rbac_001_create_tables', up: () => this.createRbacTables() },
+      { name: 'rbac_002_migrate_old_role_names', up: () => this.migrateOldRoleNames() },
+      { name: 'rbac_003_seed_default_data', up: () => this.seedDefaultData() },
+    ];
+
+    let pendingCount = 0;
+    for (const migration of migrations) {
+      const hasRun = await this.db.hasMigrationRun(migration.name);
+      if (!hasRun) {
+        await migration.up();
+        await this.db.recordMigration(migration.name);
+        pendingCount++;
+        console.log(`  ↳ Migration ${migration.name} applied`);
+      }
+    }
+
+    if (pendingCount > 0) {
+      console.log(`✅ RBAC migrations completed (${pendingCount} new)`);
+    } else {
+      console.log('✅ RBAC migrations up to date');
+    }
   }
 
   /**
    * Create RBAC tables
    */
-  async runMigrations(): Promise<void> {
+  async createRbacTables(): Promise<void> {
     // Create roles table
     await this.db.query(`
       CREATE TABLE IF NOT EXISTS roles (
@@ -51,8 +77,6 @@ export class RbacMigrationService implements OnModuleInit {
         PRIMARY KEY (role_id, permission_id)
       )
     `);
-
-    console.log('✅ RBAC tables created');
   }
 
   /**
@@ -80,8 +104,6 @@ export class RbacMigrationService implements OnModuleInit {
     
     // Update user table: rename 'user' role to 'member'
     await this.db.query(`UPDATE "user" SET role = 'member' WHERE role = 'user'`);
-
-    console.log('✅ Old role names migrated to unified model');
   }
 
   /**
