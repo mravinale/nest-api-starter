@@ -22,14 +22,14 @@ export class OrgImpersonationService {
   async getMembership(userId: string, organizationId: string): Promise<OrgMember | null> {
     const row = await this.db.queryOne<{
       id: string;
-      user_id: string;
-      organization_id: string;
+      userId: string;
+      organizationId: string;
       role: string;
-      created_at: Date;
+      createdAt: Date;
     }>(
-      `SELECT id, user_id, organization_id, role, created_at
+      `SELECT id, "userId", "organizationId", role, "createdAt"
        FROM member
-       WHERE user_id = $1 AND organization_id = $2`,
+       WHERE "userId" = $1 AND "organizationId" = $2`,
       [userId, organizationId],
     );
 
@@ -39,10 +39,10 @@ export class OrgImpersonationService {
 
     return {
       id: row.id,
-      userId: row.user_id,
-      organizationId: row.organization_id,
+      userId: row.userId,
+      organizationId: row.organizationId,
       role: row.role,
-      createdAt: row.created_at,
+      createdAt: row.createdAt,
     };
   }
 
@@ -84,7 +84,7 @@ export class OrgImpersonationService {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await this.db.query(
-      `INSERT INTO session (id, user_id, token, expires_at, impersonated_by, active_organization_id, created_at, updated_at)
+      `INSERT INTO session (id, "userId", token, "expiresAt", "impersonatedBy", "activeOrganizationId", "createdAt", "updatedAt")
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
       [
         randomUUID(),
@@ -103,8 +103,8 @@ export class OrgImpersonationService {
    * Stop impersonation - invalidate the impersonated session
    */
   async stopImpersonation(sessionToken: string): Promise<void> {
-    const session = await this.db.queryOne<{ id: string; impersonated_by: string | null }>(
-      `SELECT id, impersonated_by FROM session WHERE token = $1`,
+    const session = await this.db.queryOne<{ id: string; impersonatedBy: string | null }>(
+      `SELECT id, "impersonatedBy" FROM session WHERE token = $1`,
       [sessionToken],
     );
 
@@ -112,7 +112,7 @@ export class OrgImpersonationService {
       throw new NotFoundException('Session not found');
     }
 
-    if (!session.impersonated_by) {
+    if (!session.impersonatedBy) {
       throw new ForbiddenException('This session is not an impersonation session');
     }
 
