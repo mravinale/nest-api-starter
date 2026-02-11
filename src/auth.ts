@@ -53,7 +53,7 @@ export const auth = betterAuth({
     emailAndPassword: {
         enabled: true,
         requireEmailVerification: !isTestMode,
-        resetPasswordTokenExpiresIn: 3600, // 1 hour
+        resetPasswordTokenExpiresIn: 86400, // 24 hours
         sendResetPassword: async (payload) => {
             if (emailServiceInstance) {
                 await emailServiceInstance.sendPasswordResetEmail(payload as any);
@@ -67,7 +67,7 @@ export const auth = betterAuth({
     emailVerification: {
         sendOnSignUp: !isTestMode,
         autoSignInAfterVerification: true,
-        expiresIn: 3600, // 1 hour
+        expiresIn: 86400, // 24 hours
         sendVerificationEmail: async (payload) => {
             console.log('📧 [Auth] sendVerificationEmail called:', { 
                 email: payload.user.email, 
