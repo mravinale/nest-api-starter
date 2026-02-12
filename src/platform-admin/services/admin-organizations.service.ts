@@ -18,6 +18,34 @@ export interface PaginatedResult<T> {
 }
 
 /**
+ * Role hierarchy: higher index = higher privilege.
+ * Used to determine which roles a user can assign.
+ */
+export const ROLE_HIERARCHY: Record<string, number> = {
+  member: 0,
+  manager: 1,
+  admin: 2,
+  owner: 3,
+};
+
+/**
+ * Returns the hierarchy level for a role name.
+ * Unknown roles default to 0 (lowest).
+ */
+export function getRoleLevel(role: string): number {
+  return ROLE_HIERARCHY[role] ?? 0;
+}
+
+/**
+ * Filter roles to only those assignable by the given requester role.
+ * A user can only assign roles at or below their own level.
+ */
+export function filterAssignableRoles(allRoleNames: string[], requesterRole: string): string[] {
+  const requesterLevel = getRoleLevel(requesterRole);
+  return allRoleNames.filter((r) => getRoleLevel(r) <= requesterLevel);
+}
+
+/**
  * Service for platform-level organization management.
  * Allows platform admins to manage all organizations regardless of membership.
  */
@@ -26,9 +54,11 @@ export class AdminOrganizationsService {
   constructor(private readonly db: DatabaseService) {}
 
   /**
-   * Get all roles from the database for organization membership
+   * Get all roles from the database for organization membership.
+   * When requesterRole is provided, assignableRoles is filtered to roles
+   * at or below the requester's hierarchy level.
    */
-  async getRoles(): Promise<{
+  async getRoles(requesterRole?: string): Promise<{
     roles: Array<{ name: string; displayName: string; description: string | null; color: string | null; isSystem: boolean }>;
     assignableRoles: string[];
   }> {
@@ -40,6 +70,11 @@ export class AdminOrganizationsService {
       is_system: boolean;
     }>('SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC');
 
+    const allRoleNames = roles.map((r) => r.name);
+    const assignableRoles = requesterRole
+      ? filterAssignableRoles(allRoleNames, requesterRole)
+      : allRoleNames;
+
     return {
       roles: roles.map((r) => ({
         name: r.name,
@@ -48,7 +83,7 @@ export class AdminOrganizationsService {
         color: r.color,
         isSystem: r.is_system,
       })),
-      assignableRoles: roles.map((r) => r.name),
+      assignableRoles,
     };
   }
 
