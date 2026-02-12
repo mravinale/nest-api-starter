@@ -26,4 +26,21 @@ describe('AppController (e2e)', () => {
       .expect(200)
       .expect('Hello World!');
   });
+
+  /**
+   * PR#6 - Health check endpoint (e2e)
+   */
+  describe('/health (GET)', () => {
+    it('should return 200 with status ok', () => {
+      return request(app.getHttpServer())
+        .get('/health')
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.status).toBe('ok');
+          expect(res.body.timestamp).toBeDefined();
+          expect(res.body.uptime).toBeDefined();
+          expect(typeof res.body.uptime).toBe('number');
+        });
+    });
+  });
 });
