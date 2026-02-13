@@ -18,4 +18,13 @@ describe('AppController', () => {
       expect(appController.getHello()).toBe('Hello World!');
     });
   });
+
+  describe('getPasswordPolicy', () => {
+    it('should expose explicit password min length policy', () => {
+      const appController = app.get(AppController);
+      expect(appController.getPasswordPolicy()).toEqual({
+        minLength: 8,
+      });
+    });
+  });
 });

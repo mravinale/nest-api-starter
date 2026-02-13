@@ -1,0 +1,72 @@
+import { jest } from '@jest/globals';
+import { HttpStatus } from '@nestjs/common';
+import type { UserSession } from '@thallesp/nestjs-better-auth';
+import { AdminOrganizationsController } from './admin-organizations.controller';
+import { AdminOrganizationsService } from '../services';
+
+describe('AdminOrganizationsController validation', () => {
+  let controller: AdminOrganizationsController;
+  let orgService: jest.Mocked<AdminOrganizationsService>;
+
+  beforeEach(() => {
+    orgService = {
+      getRoles: jest.fn(),
+      findAll: jest.fn(),
+      findById: jest.fn(),
+      getMembers: jest.fn(),
+      getInvitations: jest.fn(),
+      createInvitation: jest.fn(),
+      deleteInvitation: jest.fn(),
+      addMember: jest.fn(),
+      updateMemberRole: jest.fn(),
+      removeMember: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as unknown as jest.Mocked<AdminOrganizationsService>;
+
+    controller = new AdminOrganizationsController(orgService);
+  });
+
+  const adminSession = {
+    user: { role: 'admin' },
+    session: { activeOrganizationId: null },
+  } as unknown as UserSession;
+
+  it('rejects addMember when userId is missing', async () => {
+    await expect(controller.addMember(adminSession, 'org-1', { userId: '', role: 'member' })).rejects.toMatchObject({
+      status: HttpStatus.BAD_REQUEST,
+    });
+  });
+
+  it('rejects addMember when role is invalid', async () => {
+    await expect(
+      controller.addMember(adminSession, 'org-1', {
+        userId: 'user-1',
+        role: 'owner',
+      }),
+    ).rejects.toMatchObject({
+      status: HttpStatus.BAD_REQUEST,
+    });
+  });
+
+  it('rejects updateMemberRole when role is invalid', async () => {
+    await expect(
+      controller.updateMemberRole(adminSession, 'org-1', 'member-1', {
+        role: 'owner' as 'admin' | 'manager' | 'member',
+      }),
+    ).rejects.toMatchObject({
+      status: HttpStatus.BAD_REQUEST,
+    });
+  });
+
+  it('rejects createInvitation when email is invalid', async () => {
+    await expect(
+      controller.createInvitation(adminSession, 'org-1', {
+        email: 'invalid-email',
+        role: 'member',
+      }),
+    ).rejects.toMatchObject({
+      status: HttpStatus.BAD_REQUEST,
+    });
+  });
+});

@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
 import { AllowAnonymous, Session } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
+import { PASSWORD_POLICY } from './common/password-policy';
 
 @Controller()
 export class AppController {
@@ -26,5 +27,11 @@ export class AppController {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
     };
+  }
+
+  @Get('api/password-policy')
+  @AllowAnonymous()
+  getPasswordPolicy() {
+    return PASSWORD_POLICY;
   }
 }

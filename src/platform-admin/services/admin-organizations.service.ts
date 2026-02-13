@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database';
+import { EmailService } from '../../email/email.service';
 import {
   PaginationQuery,
   UpdateOrganizationDto,
@@ -8,6 +9,7 @@ import {
   OrganizationWithMemberCount,
   rowToOrganization,
 } from '../dto';
+import { getAllowedRoleNamesForCreator } from '../../admin/admin.utils';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -23,12 +25,15 @@ export interface PaginatedResult<T> {
  */
 @Injectable()
 export class AdminOrganizationsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly emailService: EmailService,
+  ) {}
 
   /**
    * Get all roles from the database for organization membership
    */
-  async getRoles(): Promise<{
+  async getRoles(platformRole: 'admin' | 'manager' = 'admin'): Promise<{
     roles: Array<{ name: string; displayName: string; description: string | null; color: string | null; isSystem: boolean }>;
     assignableRoles: string[];
   }> {
@@ -40,6 +45,8 @@ export class AdminOrganizationsService {
       is_system: boolean;
     }>('SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC');
 
+    const allowedRoleNames = getAllowedRoleNamesForCreator(platformRole);
+
     return {
       roles: roles.map((r) => ({
         name: r.name,
@@ -48,7 +55,9 @@ export class AdminOrganizationsService {
         color: r.color,
         isSystem: r.is_system,
       })),
-      assignableRoles: roles.map((r) => r.name),
+      assignableRoles: roles
+        .map((r) => r.name)
+        .filter((roleName) => allowedRoleNames.includes(roleName as (typeof allowedRoleNames)[number])),
     };
   }
 
@@ -235,6 +244,113 @@ export class AdminOrganizationsService {
   }
 
   /**
+   * Create an invitation for an organization member.
+   */
+  async createInvitation(
+    organizationId: string,
+    email: string,
+    role: 'admin' | 'manager' | 'member',
+    platformRole: 'admin' | 'manager',
+    inviter: { id: string; email: string; name?: string },
+  ): Promise<{
+    id: string;
+    organizationId: string;
+    email: string;
+    role: string;
+    status: string;
+    expiresAt: Date;
+    inviterId: string;
+    createdAt: Date;
+  }> {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const allowedRoleNames = getAllowedRoleNamesForCreator(platformRole);
+    if (!allowedRoleNames.includes(role)) {
+      throw new ForbiddenException('Role not allowed');
+    }
+
+    const organization = await this.db.queryOne<{ id: string; name: string; slug: string }>(
+      'SELECT id, name, slug FROM organization WHERE id = $1',
+      [organizationId],
+    );
+    if (!organization) {
+      throw new Error('Organization not found');
+    }
+
+    const existingMember = await this.db.queryOne<{ id: string }>(
+      `SELECT m.id
+       FROM member m
+       JOIN "user" u ON u.id = m."userId"
+       WHERE m."organizationId" = $1 AND LOWER(u.email) = LOWER($2)`,
+      [organizationId, normalizedEmail],
+    );
+    if (existingMember) {
+      throw new Error('User is already a member of this organization');
+    }
+
+    const existingInvitation = await this.db.queryOne<{ id: string }>(
+      'SELECT id FROM invitation WHERE "organizationId" = $1 AND LOWER(email) = LOWER($2) AND status = $3',
+      [organizationId, normalizedEmail, 'pending'],
+    );
+    if (existingInvitation) {
+      throw new Error('Invitation already exists for this user');
+    }
+
+    const invitationId = this.generateId();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await this.db.query(
+      `INSERT INTO invitation (id, "organizationId", email, role, status, "expiresAt", "inviterId", "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+      [invitationId, organizationId, normalizedEmail, role, 'pending', expiresAt, inviter.id],
+    );
+
+    const invitation = await this.db.queryOne<{
+      id: string;
+      organizationId: string;
+      email: string;
+      role: string;
+      status: string;
+      expiresAt: Date;
+      inviterId: string;
+      createdAt: Date;
+    }>(
+      'SELECT id, "organizationId" as "organizationId", email, role, status, "expiresAt" as "expiresAt", "inviterId" as "inviterId", "createdAt" as "createdAt" FROM invitation WHERE id = $1',
+      [invitationId],
+    );
+
+    if (!invitation) {
+      throw new Error('Failed to create invitation');
+    }
+
+    try {
+      await this.emailService.sendOrganizationInvitation({
+        id: invitation.id,
+        email: invitation.email,
+        role: invitation.role,
+        organizationId: invitation.organizationId,
+        organization: {
+          id: organization.id,
+          name: organization.name,
+          slug: organization.slug,
+        },
+        inviter: {
+          user: {
+            id: inviter.id,
+            email: inviter.email,
+            name: inviter.name,
+          },
+        },
+        expiresAt: invitation.expiresAt,
+      });
+    } catch (error) {
+      console.error('Failed to send organization invitation email:', error);
+    }
+
+    return invitation;
+  }
+
+  /**
    * Get invitations for an organization
    */
   async getInvitations(organizationId: string): Promise<Array<{
@@ -268,7 +384,7 @@ export class AdminOrganizationsService {
    */
   async deleteInvitation(organizationId: string, invitationId: string): Promise<void> {
     const result = await this.db.query(
-      `DELETE FROM invitation WHERE id = $1 AND "organizationId" = $2`,
+      `DELETE FROM invitation WHERE id = $1 AND "organizationId" = $2 RETURNING id`,
       [invitationId, organizationId],
     );
 
@@ -340,6 +456,107 @@ export class AdminOrganizationsService {
     );
 
     return member!;
+  }
+
+  async updateMemberRole(
+    organizationId: string,
+    memberId: string,
+    newRole: 'admin' | 'manager' | 'member',
+    platformRole: 'admin' | 'manager',
+  ): Promise<{
+    id: string;
+    organizationId: string;
+    userId: string;
+    role: string;
+    createdAt: Date;
+  }> {
+    const allowedRoleNames = getAllowedRoleNamesForCreator(platformRole);
+    if (!allowedRoleNames.includes(newRole)) {
+      throw new ForbiddenException('Role not allowed');
+    }
+
+    const member = await this.db.queryOne<{ id: string; role: string; userId: string }>(
+      'SELECT id, role, "userId" as "userId" FROM member WHERE id = $1 AND "organizationId" = $2',
+      [memberId, organizationId],
+    );
+
+    if (!member) {
+      throw new Error('Member not found');
+    }
+
+    if (platformRole === 'manager' && member.role !== 'member') {
+      throw new ForbiddenException('Managers can only change member roles');
+    }
+
+    if (member.role === 'admin' && newRole !== 'admin') {
+      const adminCount = await this.db.queryOne<{ count: string }>(
+        'SELECT COUNT(*)::text as count FROM member WHERE "organizationId" = $1 AND role = $2',
+        [organizationId, 'admin'],
+      );
+
+      if ((adminCount ? parseInt(adminCount.count, 10) : 0) <= 1) {
+        throw new ForbiddenException('Cannot change role of the last organization admin');
+      }
+    }
+
+    await this.db.query(
+      'UPDATE member SET role = $1 WHERE id = $2 AND "organizationId" = $3',
+      [newRole, memberId, organizationId],
+    );
+
+    const updated = await this.db.queryOne<{
+      id: string;
+      organizationId: string;
+      userId: string;
+      role: string;
+      createdAt: Date;
+    }>(
+      'SELECT id, "organizationId" as "organizationId", "userId" as "userId", role, "createdAt" as "createdAt" FROM member WHERE id = $1 AND "organizationId" = $2',
+      [memberId, organizationId],
+    );
+
+    return updated!;
+  }
+
+  async removeMember(
+    organizationId: string,
+    memberId: string,
+    platformRole: 'admin' | 'manager',
+  ): Promise<{ success: true }> {
+    const member = await this.db.queryOne<{ id: string; role: string; userId: string }>(
+      'SELECT id, role, "userId" as "userId" FROM member WHERE id = $1 AND "organizationId" = $2',
+      [memberId, organizationId],
+    );
+
+    if (!member) {
+      throw new Error('Member not found');
+    }
+
+    if (platformRole === 'manager' && member.role !== 'member') {
+      throw new ForbiddenException('Managers can only remove members');
+    }
+
+    if (member.role === 'admin') {
+      const adminCount = await this.db.queryOne<{ count: string }>(
+        'SELECT COUNT(*)::text as count FROM member WHERE "organizationId" = $1 AND role = $2',
+        [organizationId, 'admin'],
+      );
+
+      if ((adminCount ? parseInt(adminCount.count, 10) : 0) <= 1) {
+        throw new ForbiddenException('Cannot remove the last organization admin');
+      }
+    }
+
+    const result = await this.db.query<{ id: string }>(
+      'DELETE FROM member WHERE id = $1 AND "organizationId" = $2 RETURNING id',
+      [memberId, organizationId],
+    );
+
+    if (result.length === 0) {
+      throw new Error('Member not found');
+    }
+
+    return { success: true };
   }
 
   private generateId(): string {

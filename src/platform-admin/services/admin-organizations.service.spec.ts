@@ -2,10 +2,12 @@ import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminOrganizationsService } from './admin-organizations.service';
 import { DatabaseService } from '../../database';
+import { EmailService } from '../../email/email.service';
 
 describe('AdminOrganizationsService', () => {
   let service: AdminOrganizationsService;
   let dbService: jest.Mocked<DatabaseService>;
+  let emailService: jest.Mocked<EmailService>;
 
   const mockOrganization = {
     id: 'org-1',
@@ -24,15 +26,24 @@ describe('AdminOrganizationsService', () => {
       transaction: jest.fn(),
     };
 
+    const mockEmailService = {
+      sendOrganizationInvitation: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      sendEmailVerification: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      sendPasswordResetEmail: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      sendEmail: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminOrganizationsService,
         { provide: DatabaseService, useValue: mockDbService },
+        { provide: EmailService, useValue: mockEmailService },
       ],
     }).compile();
 
     service = module.get<AdminOrganizationsService>(AdminOrganizationsService);
     dbService = module.get(DatabaseService);
+    emailService = module.get(EmailService);
   });
 
   it('should be defined', () => {
@@ -75,6 +86,61 @@ describe('AdminOrganizationsService', () => {
       expect(result.total).toBe(0);
       expect(result.data).toHaveLength(0);
       expect(result.totalPages).toBe(0);
+    });
+  });
+
+  describe('createInvitation', () => {
+    it('should create invitation and send email for admin actor', async () => {
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'org-1', name: 'Test Org', slug: 'test-org' })
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 'inv-1',
+          organizationId: 'org-1',
+          email: 'invitee@example.com',
+          role: 'member',
+          status: 'pending',
+          expiresAt,
+          inviterId: 'actor-1',
+          createdAt: new Date(),
+        });
+      dbService.query.mockResolvedValueOnce([]);
+
+      const result = await service.createInvitation(
+        'org-1',
+        'invitee@example.com',
+        'member',
+        'admin',
+        { id: 'actor-1', email: 'admin@example.com', name: 'Admin User' },
+      );
+
+      expect(result.email).toBe('invitee@example.com');
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO invitation'),
+        expect.arrayContaining(['org-1', 'invitee@example.com', 'member', 'pending', 'actor-1']),
+      );
+      expect(emailService.sendOrganizationInvitation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'invitee@example.com',
+          role: 'member',
+          organizationId: 'org-1',
+        }),
+      );
+    });
+
+    it('should block manager from inviting admin role', async () => {
+      await expect(
+        service.createInvitation(
+          'org-1',
+          'invitee@example.com',
+          'admin',
+          'manager',
+          { id: 'actor-2', email: 'manager@example.com', name: 'Manager User' },
+        ),
+      ).rejects.toThrow('Role not allowed');
     });
   });
 
@@ -171,6 +237,75 @@ describe('AdminOrganizationsService', () => {
     });
   });
 
+  describe('updateMemberRole', () => {
+    it('should update member role for admin actor', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'member-1', role: 'member', userId: 'user-1' })
+        .mockResolvedValueOnce({ id: 'member-1', role: 'manager', userId: 'user-1', organizationId: 'org-1' });
+
+      const result = await service.updateMemberRole('org-1', 'member-1', 'manager', 'admin');
+
+      expect(result.role).toBe('manager');
+      expect(dbService.query).toHaveBeenCalledWith(
+        'UPDATE member SET role = $1 WHERE id = $2 AND "organizationId" = $3',
+        ['manager', 'member-1', 'org-1'],
+      );
+    });
+
+    it('should block manager from changing another manager role', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ id: 'member-1', role: 'manager', userId: 'user-1' });
+
+      await expect(service.updateMemberRole('org-1', 'member-1', 'member', 'manager')).rejects.toThrow(
+        'Managers can only change member roles',
+      );
+    });
+
+    it('should block downgrading last admin in organization', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'member-1', role: 'admin', userId: 'user-1' })
+        .mockResolvedValueOnce({ count: '1' });
+
+      await expect(service.updateMemberRole('org-1', 'member-1', 'manager', 'admin')).rejects.toThrow(
+        'Cannot change role of the last organization admin',
+      );
+    });
+  });
+
+  describe('removeMember', () => {
+    it('should remove member for admin actor', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'member-1', role: 'member', userId: 'user-1' })
+        .mockResolvedValueOnce({ id: 'member-1' });
+      dbService.query.mockResolvedValueOnce([{ id: 'member-1' }]);
+
+      const result = await service.removeMember('org-1', 'member-1', 'admin');
+
+      expect(result.success).toBe(true);
+      expect(dbService.query).toHaveBeenCalledWith(
+        'DELETE FROM member WHERE id = $1 AND "organizationId" = $2 RETURNING id',
+        ['member-1', 'org-1'],
+      );
+    });
+
+    it('should block manager from removing non-member roles', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ id: 'member-1', role: 'manager', userId: 'user-1' });
+
+      await expect(service.removeMember('org-1', 'member-1', 'manager')).rejects.toThrow(
+        'Managers can only remove members',
+      );
+    });
+
+    it('should block removing last admin in organization', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'member-1', role: 'admin', userId: 'user-1' })
+        .mockResolvedValueOnce({ count: '1' });
+
+      await expect(service.removeMember('org-1', 'member-1', 'admin')).rejects.toThrow(
+        'Cannot remove the last organization admin',
+      );
+    });
+  });
+
   describe('getRoles', () => {
     const mockRoles = [
       { name: 'admin', display_name: 'Admin', description: 'Platform admin', color: '#ff0000', is_system: true },
@@ -216,6 +351,26 @@ describe('AdminOrganizationsService', () => {
       expect(dbService.query).toHaveBeenCalledWith(
         'SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC'
       );
+    });
+
+    it('should filter assignableRoles for manager', async () => {
+      dbService.query.mockResolvedValue(mockRoles);
+
+      const result = await service.getRoles('manager');
+
+      expect(result.assignableRoles).toEqual(['manager', 'member']);
+    });
+
+    it('should not allow assigning owner role for admin', async () => {
+      dbService.query.mockResolvedValue([
+        ...mockRoles,
+        { name: 'owner', display_name: 'Owner', description: 'Organization owner', color: '#ffaa00', is_system: true },
+      ]);
+
+      const result = await service.getRoles('admin');
+
+      expect(result.assignableRoles).toEqual(expect.arrayContaining(['admin', 'manager', 'member']));
+      expect(result.assignableRoles).not.toContain('owner');
     });
   });
 });
