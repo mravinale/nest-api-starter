@@ -131,6 +131,141 @@ describe('AdminService', () => {
     it('should throw ForbiddenException when manager has no active organization', async () => {
       await expect(service.setUserRole({ userId: 'user-1', role: 'manager' }, 'manager', null)).rejects.toThrow(ForbiddenException);
     });
+
+    it('should throw ForbiddenException when user tries to change own role', async () => {
+      await expect(
+        service.setUserRole(
+          { userId: 'user-1', role: 'member' },
+          'admin',
+          null,
+          'user-1',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should allow self-update', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ ...mockUser, name: 'Self Updated' });
+
+      const result = await service.updateUser(
+        { userId: 'user-1', name: 'Self Updated' },
+        'admin',
+        null,
+        'user-1',
+      );
+
+      expect(result.name).toBe('Self Updated');
+    });
+
+    it('should allow self password reset', async () => {
+      dbService.query.mockResolvedValueOnce([]);
+
+      const result = await service.setUserPassword(
+        { userId: 'user-1', newPassword: 'NewPass123!' },
+        'admin',
+        null,
+        'user-1',
+      );
+
+      expect(result.status).toBe(true);
+    });
+
+    it('should block self-unban', async () => {
+      await expect(
+        service.unbanUser(
+          { userId: 'user-1' },
+          'admin',
+          null,
+          'user-1',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should block self-delete', async () => {
+      await expect(
+        service.removeUser(
+          { userId: 'user-1' },
+          'admin',
+          null,
+          'user-1',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should block admin from deleting another admin', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+
+      await expect(
+        service.removeUser(
+          { userId: 'target-admin' },
+          'admin',
+          null,
+          'actor-admin',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should block manager from updating manager', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'manager' });
+
+      await expect(
+        service.updateUser(
+          { userId: 'target-manager', name: 'Nope' },
+          'manager',
+          'org-1',
+          'actor-manager',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should block bulk delete when target list includes self', async () => {
+      await expect(
+        service.removeUsers(
+          { userIds: ['user-1', 'user-2'] },
+          'admin',
+          null,
+          'user-1',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('target action policy', () => {
+    it('should block admin from banning another admin', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+
+      await expect(
+        service.banUser(
+          { userId: 'target-admin', banReason: 'Violation' },
+          'admin',
+          null,
+          'actor-admin',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should block manager from banning another manager', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'manager' });
+
+      await expect(
+        service.banUser(
+          { userId: 'target-manager', banReason: 'Violation' },
+          'manager',
+          'org-1',
+          'actor-manager',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should block self-ban', async () => {
+      await expect(
+        service.banUser(
+          { userId: 'user-1', banReason: 'Violation' },
+          'admin',
+          null,
+          'user-1',
+        )
+      ).rejects.toThrow(ForbiddenException);
+    });
   });
 
   describe('listUsers', () => {
@@ -275,6 +410,65 @@ describe('AdminService', () => {
         platformRole: 'manager',
         activeOrganizationId: null,
       })).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('getUserCapabilities', () => {
+    it('returns self-safe capabilities for admin acting on self', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+
+      const result = await service.getUserCapabilities({
+        actorUserId: 'admin-1',
+        targetUserId: 'admin-1',
+        platformRole: 'admin',
+        activeOrganizationId: null,
+      });
+
+      expect(result.isSelf).toBe(true);
+      expect(result.actions.update).toBe(true);
+      expect(result.actions.setPassword).toBe(true);
+      expect(result.actions.setRole).toBe(false);
+      expect(result.actions.ban).toBe(false);
+      expect(result.actions.remove).toBe(false);
+      expect(result.actions.impersonate).toBe(false);
+    });
+
+    it('blocks admin from sensitive actions against another admin', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+
+      const result = await service.getUserCapabilities({
+        actorUserId: 'admin-1',
+        targetUserId: 'admin-2',
+        platformRole: 'admin',
+        activeOrganizationId: null,
+      });
+
+      expect(result.isSelf).toBe(false);
+      expect(result.actions.update).toBe(false);
+      expect(result.actions.setRole).toBe(false);
+      expect(result.actions.ban).toBe(false);
+      expect(result.actions.remove).toBe(false);
+      expect(result.actions.revokeSessions).toBe(false);
+      expect(result.actions.impersonate).toBe(false);
+    });
+
+    it('allows manager actions on member in active organization only', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ role: 'member' })
+        .mockResolvedValueOnce({ id: 'member-row' });
+
+      const result = await service.getUserCapabilities({
+        actorUserId: 'manager-1',
+        targetUserId: 'member-1',
+        platformRole: 'manager',
+        activeOrganizationId: 'org-1',
+      });
+
+      expect(result.actions.update).toBe(true);
+      expect(result.actions.setRole).toBe(true);
+      expect(result.actions.ban).toBe(true);
+      expect(result.actions.remove).toBe(true);
+      expect(result.actions.impersonate).toBe(true);
     });
   });
 });

@@ -1,4 +1,5 @@
 import { DatabaseService } from './database.module';
+import { jest } from '@jest/globals';
 
 /**
  * Unit tests for DatabaseService migration tracking (PR#3 - migration tracking system)
@@ -9,8 +10,8 @@ describe('DatabaseService - Migration Tracking', () => {
 
   beforeEach(() => {
     mockPool = {
-      query: jest.fn().mockResolvedValue({ rows: [] }),
-      end: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn<() => Promise<{ rows: unknown[] }>>().mockResolvedValue({ rows: [] }),
+      end: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       connect: jest.fn(),
     };
 

@@ -272,7 +272,7 @@ describe('Admin User Management - Role-Based Access Control', () => {
           password: 'SecurePass123!',
           role: 'manager',
         })
-        .expect(403);
+        .expect(400);
     });
 
     it('should reject duplicate email', async () => {

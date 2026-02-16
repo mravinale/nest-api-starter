@@ -39,6 +39,59 @@ export class TestHelpers {
     private readonly app: INestApplication<App>,
   ) {}
 
+  private async ensureDefaultRolePermissions(): Promise<void> {
+    await this.dbService.query(
+      `INSERT INTO role_permissions (role_id, permission_id)
+       SELECT r.id, p.id
+       FROM roles r
+       CROSS JOIN permissions p
+       WHERE r.name = 'admin'
+       ON CONFLICT DO NOTHING`,
+    );
+
+    const managerPermissions = [
+      ['user', 'read'],
+      ['user', 'update'],
+      ['user', 'ban'],
+      ['session', 'read'],
+      ['session', 'revoke'],
+      ['organization', 'read'],
+      ['organization', 'update'],
+      ['organization', 'invite'],
+      ['role', 'read'],
+    ] as const;
+
+    for (const [resource, action] of managerPermissions) {
+      await this.dbService.query(
+        `INSERT INTO role_permissions (role_id, permission_id)
+         SELECT r.id, p.id
+         FROM roles r
+         JOIN permissions p ON p.resource = $2 AND p.action = $3
+         WHERE r.name = $1
+         ON CONFLICT DO NOTHING`,
+        ['manager', resource, action],
+      );
+    }
+
+    const memberPermissions = [
+      ['user', 'read'],
+      ['organization', 'read'],
+      ['role', 'read'],
+    ] as const;
+
+    for (const [resource, action] of memberPermissions) {
+      await this.dbService.query(
+        `INSERT INTO role_permissions (role_id, permission_id)
+         SELECT r.id, p.id
+         FROM roles r
+         JOIN permissions p ON p.resource = $2 AND p.action = $3
+         WHERE r.name = $1
+         ON CONFLICT DO NOTHING`,
+        ['member', resource, action],
+      );
+    }
+  }
+
   async signUpAndGetCookie(data: {
     name: string;
     email: string;
@@ -119,6 +172,8 @@ export class TestHelpers {
   }
 
   async setupTestContext(): Promise<TestContext> {
+    await this.ensureDefaultRolePermissions();
+
     // Create test organization
     const testOrg = await this.createTestOrganization({
       name: 'Test Organization',
@@ -150,7 +205,7 @@ export class TestHelpers {
     await this.setUserRole(memberSignUp.userId, 'member');
 
     // Add manager and member to the organization
-    await this.addUserToOrganization(managerSignUp.userId, testOrg.id, 'owner');
+    await this.addUserToOrganization(managerSignUp.userId, testOrg.id, 'manager');
     await this.addUserToOrganization(memberSignUp.userId, testOrg.id, 'member');
 
     // Set active organization for manager and member

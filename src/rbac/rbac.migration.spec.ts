@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { jest } from '@jest/globals';
 import { RbacMigrationService } from './rbac.migration';
 import { DatabaseService } from '../database';
 
@@ -11,10 +12,10 @@ describe('RbacMigrationService', () => {
 
   beforeEach(async () => {
     const mockDbService = {
-      query: jest.fn().mockResolvedValue([]),
-      queryOne: jest.fn().mockResolvedValue(null),
-      hasMigrationRun: jest.fn().mockResolvedValue(false),
-      recordMigration: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
+      queryOne: jest.fn<() => Promise<unknown | null>>().mockResolvedValue(null),
+      hasMigrationRun: jest.fn<() => Promise<boolean>>().mockResolvedValue(false),
+      recordMigration: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({

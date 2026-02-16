@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 /**
  * Unit tests for auth configuration (PR#7 - token expiry increase to 24 hours)
  *
@@ -8,11 +11,9 @@
 describe('Auth Configuration - Token Expiry (PR#7)', () => {
   let authSource: string;
 
-  beforeAll(async () => {
-    const fs = await import('fs');
-    const path = await import('path');
+  beforeAll(() => {
     authSource = fs.readFileSync(
-      path.resolve(__dirname, 'auth.ts'),
+      path.resolve(process.cwd(), 'src', 'auth.ts'),
       'utf-8',
     );
   });

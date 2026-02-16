@@ -27,6 +27,58 @@ export class AdminService {
     private readonly configService: ConfigService,
   ) {}
 
+  private async getTargetRole(userId: string): Promise<'admin' | 'manager' | 'member' | null> {
+    const row = await this.db.queryOne<{ role: string }>(
+      'SELECT role FROM "user" WHERE id = $1',
+      [userId],
+    );
+
+    if (!row) {
+      return null;
+    }
+
+    if (row.role === 'admin' || row.role === 'manager' || row.role === 'member') {
+      return row.role;
+    }
+
+    return 'member';
+  }
+
+  private async assertTargetActionAllowed(
+    params: {
+      actorUserId?: string;
+      targetUserId: string;
+      platformRole: 'admin' | 'manager';
+      allowSelf: boolean;
+    },
+  ): Promise<void> {
+    const { actorUserId, targetUserId, platformRole, allowSelf } = params;
+
+    if (!actorUserId) {
+      return;
+    }
+
+    if (actorUserId === targetUserId) {
+      if (!allowSelf) {
+        throw new ForbiddenException('You cannot perform this action on yourself');
+      }
+      return;
+    }
+
+    const targetRole = await this.getTargetRole(targetUserId);
+    if (!targetRole) {
+      throw new ForbiddenException('Target user not found');
+    }
+
+    if (platformRole === 'admin' && targetRole === 'admin') {
+      throw new ForbiddenException('Admins cannot perform this action on other admins');
+    }
+
+    if (platformRole === 'manager' && targetRole !== 'member') {
+      throw new ForbiddenException('Managers can only perform this action on members');
+    }
+  }
+
   private async assertUserInManagerOrg(userId: string, activeOrganizationId: string): Promise<void> {
     const member = await this.db.queryOne<{ id: string }>(
       'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
@@ -48,10 +100,7 @@ export class AdminService {
       'SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC',
     );
 
-    console.log('DEBUG - platformRole:', platformRole);
-    console.log('DEBUG - roles from DB:', roles.map(r => r.name));
     const allowedRoleNames = getAllowedRoleNamesForCreator(platformRole);
-    console.log('DEBUG - allowedRoleNames:', allowedRoleNames);
 
     let organizations: Array<{ id: string; name: string; slug: string }> = [];
     if (platformRole === 'admin') {
@@ -86,7 +135,15 @@ export class AdminService {
     input: { userId: string; name?: string },
     platformRole: 'admin' | 'manager',
     activeOrganizationId: string | null,
+    actorUserId?: string,
   ) {
+    await this.assertTargetActionAllowed({
+      actorUserId,
+      targetUserId: input.userId,
+      platformRole,
+      allowSelf: true,
+    });
+
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
@@ -120,7 +177,15 @@ export class AdminService {
     input: { userId: string; role: 'admin' | 'manager' | 'member' },
     platformRole: 'admin' | 'manager',
     activeOrganizationId: string | null,
+    actorUserId?: string,
   ) {
+    await this.assertTargetActionAllowed({
+      actorUserId,
+      targetUserId: input.userId,
+      platformRole,
+      allowSelf: false,
+    });
+
     const allowed = getAllowedRoleNamesForCreator(platformRole);
     if (!allowed.includes(input.role)) {
       throw new ForbiddenException('Role not allowed');
@@ -173,7 +238,15 @@ export class AdminService {
     input: { userId: string; banReason?: string },
     platformRole: 'admin' | 'manager',
     activeOrganizationId: string | null,
+    actorUserId?: string,
   ) {
+    await this.assertTargetActionAllowed({
+      actorUserId,
+      targetUserId: input.userId,
+      platformRole,
+      allowSelf: false,
+    });
+
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
@@ -190,7 +263,15 @@ export class AdminService {
     input: { userId: string },
     platformRole: 'admin' | 'manager',
     activeOrganizationId: string | null,
+    actorUserId?: string,
   ) {
+    await this.assertTargetActionAllowed({
+      actorUserId,
+      targetUserId: input.userId,
+      platformRole,
+      allowSelf: false,
+    });
+
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
@@ -207,7 +288,15 @@ export class AdminService {
     input: { userId: string; newPassword: string },
     platformRole: 'admin' | 'manager',
     activeOrganizationId: string | null,
+    actorUserId?: string,
   ) {
+    await this.assertTargetActionAllowed({
+      actorUserId,
+      targetUserId: input.userId,
+      platformRole,
+      allowSelf: true,
+    });
+
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
@@ -225,7 +314,15 @@ export class AdminService {
     input: { userId: string },
     platformRole: 'admin' | 'manager',
     activeOrganizationId: string | null,
+    actorUserId?: string,
   ) {
+    await this.assertTargetActionAllowed({
+      actorUserId,
+      targetUserId: input.userId,
+      platformRole,
+      allowSelf: false,
+    });
+
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
@@ -238,6 +335,7 @@ export class AdminService {
     input: { userIds: string[] },
     platformRole: 'admin' | 'manager',
     activeOrganizationId: string | null,
+    actorUserId?: string,
   ) {
     if (input.userIds.length === 0) {
       return { success: true, deletedCount: 0 };
@@ -246,7 +344,22 @@ export class AdminService {
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       for (const userId of input.userIds) {
+        await this.assertTargetActionAllowed({
+          actorUserId,
+          targetUserId: userId,
+          platformRole,
+          allowSelf: false,
+        });
         await this.assertUserInManagerOrg(userId, activeOrganizationId);
+      }
+    } else {
+      for (const userId of input.userIds) {
+        await this.assertTargetActionAllowed({
+          actorUserId,
+          targetUserId: userId,
+          platformRole,
+          allowSelf: false,
+        });
       }
     }
 
@@ -330,6 +443,60 @@ export class AdminService {
       total: totalRow ? parseInt(totalRow.count, 10) : 0,
       limit,
       offset,
+    };
+  }
+
+  async getUserCapabilities(params: {
+    actorUserId: string;
+    targetUserId: string;
+    platformRole: 'admin' | 'manager';
+    activeOrganizationId: string | null;
+  }) {
+    const { actorUserId, targetUserId, platformRole, activeOrganizationId } = params;
+
+    const targetRole = await this.getTargetRole(targetUserId);
+    if (!targetRole) {
+      throw new ForbiddenException('Target user not found');
+    }
+
+    const isSelf = actorUserId === targetUserId;
+    const isTargetMember = targetRole === 'member';
+
+    let isTargetInActiveOrganization = true;
+    if (platformRole === 'manager') {
+      if (!activeOrganizationId) {
+        isTargetInActiveOrganization = false;
+      } else {
+        const member = await this.db.queryOne<{ id: string }>(
+          'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
+          [activeOrganizationId, targetUserId],
+        );
+        isTargetInActiveOrganization = !!member;
+      }
+    }
+
+    const canSelfSafeAction = isSelf && (platformRole === 'admin' || isTargetInActiveOrganization);
+
+    const canMutateNonSelf =
+      !isSelf &&
+      (platformRole === 'admin'
+        ? targetRole !== 'admin'
+        : isTargetMember && isTargetInActiveOrganization);
+
+    return {
+      targetUserId,
+      targetRole,
+      isSelf,
+      actions: {
+        update: canSelfSafeAction || canMutateNonSelf,
+        setRole: canMutateNonSelf,
+        ban: canMutateNonSelf,
+        unban: canMutateNonSelf,
+        setPassword: canSelfSafeAction || canMutateNonSelf,
+        remove: canMutateNonSelf,
+        revokeSessions: canMutateNonSelf,
+        impersonate: canMutateNonSelf,
+      },
     };
   }
 

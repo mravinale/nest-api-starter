@@ -30,6 +30,8 @@ import { PaginationQuery, UpdateOrganizationDto } from '../dto';
 export class AdminOrganizationsController {
   constructor(private readonly orgService: AdminOrganizationsService) {}
 
+  private readonly allowedMemberRoles = ['admin', 'manager', 'member'] as const;
+
   private getSessionInfo(session: UserSession): { role: 'admin' | 'manager'; activeOrgId: string | null } {
     const role = session?.user?.role as string;
     const activeOrgId = (session?.session as { activeOrganizationId?: string })?.activeOrganizationId ?? null;
@@ -48,6 +50,36 @@ export class AdminOrganizationsController {
   private assertManagerCanAccessOrg(role: 'admin' | 'manager', activeOrgId: string | null, targetOrgId: string): void {
     if (role === 'manager' && activeOrgId !== targetOrgId) {
       throw new ForbiddenException('You can only access your own organization');
+    }
+  }
+
+  private validateAddMemberPayload(body: { userId: string; role: string }): void {
+    if (!body?.userId?.trim()) {
+      throw new HttpException('userId is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!body?.role || !this.allowedMemberRoles.includes(body.role as (typeof this.allowedMemberRoles)[number])) {
+      throw new HttpException('invalid role', HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  private validateUpdateMemberRolePayload(body: { role: string }): void {
+    if (!body?.role || !this.allowedMemberRoles.includes(body.role as (typeof this.allowedMemberRoles)[number])) {
+      throw new HttpException('invalid role', HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  private validateCreateInvitationPayload(body: { email: string; role: string }): void {
+    if (!body?.email?.trim()) {
+      throw new HttpException('email is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!body.email.includes('@')) {
+      throw new HttpException('invalid email', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!body?.role || !this.allowedMemberRoles.includes(body.role as (typeof this.allowedMemberRoles)[number])) {
+      throw new HttpException('invalid role', HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -143,6 +175,37 @@ export class AdminOrganizationsController {
   }
 
   /**
+   * Create invitation for organization.
+   */
+  @Post(':id/invitations')
+  @RequirePermissions('organization:invite')
+  async createInvitation(
+    @Session() session: UserSession,
+    @Param('id') id: string,
+    @Body() body: { email: string; role: 'admin' | 'manager' | 'member' },
+  ) {
+    this.validateCreateInvitationPayload(body);
+
+    const { role, activeOrgId } = this.getSessionInfo(session);
+    this.requireActiveOrgForManager(role, activeOrgId);
+    this.assertManagerCanAccessOrg(role, activeOrgId, id);
+
+    const invitation = await this.orgService.createInvitation(
+      id,
+      body.email,
+      body.role,
+      role,
+      {
+        id: session.user.id,
+        email: session.user.email,
+        name: session.user.name,
+      },
+    );
+
+    return { data: invitation };
+  }
+
+  /**
    * Delete an invitation
    */
   @Delete(':orgId/invitations/:invitationId')
@@ -170,6 +233,8 @@ export class AdminOrganizationsController {
     @Param('id') id: string,
     @Body() body: { userId: string; role: string },
   ) {
+    this.validateAddMemberPayload(body);
+
     const { role, activeOrgId } = this.getSessionInfo(session);
     this.requireActiveOrgForManager(role, activeOrgId);
     this.assertManagerCanAccessOrg(role, activeOrgId, id);
@@ -189,6 +254,44 @@ export class AdminOrganizationsController {
     }
     const member = await this.orgService.addMember(id, body.userId, body.role);
     return { data: member };
+  }
+
+  /**
+   * Update a member role in an organization.
+   */
+  @Put(':id/members/:memberId/role')
+  @RequirePermissions('organization:invite')
+  async updateMemberRole(
+    @Session() session: UserSession,
+    @Param('id') id: string,
+    @Param('memberId') memberId: string,
+    @Body() body: { role: 'admin' | 'manager' | 'member' },
+  ) {
+    this.validateUpdateMemberRolePayload(body);
+
+    const { role, activeOrgId } = this.getSessionInfo(session);
+    this.requireActiveOrgForManager(role, activeOrgId);
+    this.assertManagerCanAccessOrg(role, activeOrgId, id);
+
+    const updated = await this.orgService.updateMemberRole(id, memberId, body.role, role);
+    return { data: updated };
+  }
+
+  /**
+   * Remove a member from an organization.
+   */
+  @Delete(':id/members/:memberId')
+  @RequirePermissions('organization:invite')
+  async removeMember(
+    @Session() session: UserSession,
+    @Param('id') id: string,
+    @Param('memberId') memberId: string,
+  ) {
+    const { role, activeOrgId } = this.getSessionInfo(session);
+    this.requireActiveOrgForManager(role, activeOrgId);
+    this.assertManagerCanAccessOrg(role, activeOrgId, id);
+
+    return this.orgService.removeMember(id, memberId, role);
   }
 
   /**

@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { jest } from '@jest/globals';
 
 // Mock @thallesp/nestjs-better-auth to avoid ESM import issues with better-auth
 jest.mock('@thallesp/nestjs-better-auth', () => ({
@@ -26,6 +27,15 @@ describe('AppController', () => {
   describe('getHello', () => {
     it('should return "Hello World!"', () => {
       expect(appController.getHello()).toBe('Hello World!');
+    });
+  });
+
+  describe('getPasswordPolicy', () => {
+    it('should expose explicit password min length policy', () => {
+      const appController = app.get(AppController);
+      expect(appController.getPasswordPolicy()).toEqual({
+        minLength: 8,
+      });
     });
   });
 
