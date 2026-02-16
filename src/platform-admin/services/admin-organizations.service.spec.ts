@@ -1,6 +1,11 @@
 import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AdminOrganizationsService } from './admin-organizations.service';
+import {
+  AdminOrganizationsService,
+  ROLE_HIERARCHY,
+  getRoleLevel,
+  filterAssignableRoles,
+} from './admin-organizations.service';
 import { DatabaseService } from '../../database';
 import { EmailService } from '../../email/email.service';
 
@@ -326,12 +331,47 @@ describe('AdminOrganizationsService', () => {
       expect(result.roles[0].isSystem).toBe(true);
     });
 
-    it('should return assignableRoles as array of role names', async () => {
+    it('should return all assignableRoles when no requesterRole provided', async () => {
       dbService.query.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles();
 
       expect(result.assignableRoles).toEqual(['admin', 'manager', 'member']);
+    });
+
+    it('should filter assignableRoles for manager (only manager + member)', async () => {
+      dbService.query.mockResolvedValue(mockRoles);
+
+      const result = await service.getRoles('manager');
+
+      expect(result.assignableRoles).toEqual(['manager', 'member']);
+      expect(result.assignableRoles).not.toContain('admin');
+    });
+
+    it('should return all assignableRoles for admin', async () => {
+      dbService.query.mockResolvedValue(mockRoles);
+
+      const result = await service.getRoles('admin');
+
+      expect(result.assignableRoles).toEqual(['admin', 'manager', 'member']);
+    });
+
+    it('should filter assignableRoles for member (only member)', async () => {
+      dbService.query.mockResolvedValue(mockRoles);
+
+      const result = await service.getRoles('member');
+
+      expect(result.assignableRoles).toEqual(['member']);
+    });
+
+    it('should still return all roles metadata regardless of requesterRole', async () => {
+      dbService.query.mockResolvedValue(mockRoles);
+
+      const result = await service.getRoles('manager');
+
+      // All roles visible for display, but assignableRoles is filtered
+      expect(result.roles).toHaveLength(3);
+      expect(result.assignableRoles).toHaveLength(2);
     });
 
     it('should handle empty roles table', async () => {
@@ -371,6 +411,60 @@ describe('AdminOrganizationsService', () => {
 
       expect(result.assignableRoles).toEqual(expect.arrayContaining(['admin', 'manager', 'member']));
       expect(result.assignableRoles).not.toContain('owner');
+    });
+  });
+});
+
+// Pure function unit tests (no DI needed)
+describe('Role Hierarchy Utilities', () => {
+  describe('ROLE_HIERARCHY', () => {
+    it('should have member < manager < admin < owner', () => {
+      expect(ROLE_HIERARCHY.member).toBeLessThan(ROLE_HIERARCHY.manager);
+      expect(ROLE_HIERARCHY.manager).toBeLessThan(ROLE_HIERARCHY.admin);
+      expect(ROLE_HIERARCHY.admin).toBeLessThan(ROLE_HIERARCHY.owner);
+    });
+  });
+
+  describe('getRoleLevel', () => {
+    it('should return correct level for known roles', () => {
+      expect(getRoleLevel('member')).toBe(0);
+      expect(getRoleLevel('manager')).toBe(1);
+      expect(getRoleLevel('admin')).toBe(2);
+      expect(getRoleLevel('owner')).toBe(3);
+    });
+
+    it('should return 0 for unknown roles', () => {
+      expect(getRoleLevel('unknown')).toBe(0);
+      expect(getRoleLevel('')).toBe(0);
+    });
+  });
+
+  describe('filterAssignableRoles', () => {
+    const allRoles = ['admin', 'manager', 'member'];
+
+    it('manager should only assign manager and member', () => {
+      expect(filterAssignableRoles(allRoles, 'manager')).toEqual(['manager', 'member']);
+    });
+
+    it('admin should assign all roles', () => {
+      expect(filterAssignableRoles(allRoles, 'admin')).toEqual(['admin', 'manager', 'member']);
+    });
+
+    it('member should only assign member', () => {
+      expect(filterAssignableRoles(allRoles, 'member')).toEqual(['member']);
+    });
+
+    it('owner should assign all roles including admin', () => {
+      const rolesWithOwner = ['owner', 'admin', 'manager', 'member'];
+      expect(filterAssignableRoles(rolesWithOwner, 'owner')).toEqual(rolesWithOwner);
+    });
+
+    it('unknown role should only assign member-level roles', () => {
+      expect(filterAssignableRoles(allRoles, 'unknown')).toEqual(['member']);
+    });
+
+    it('should handle empty input', () => {
+      expect(filterAssignableRoles([], 'admin')).toEqual([]);
     });
   });
 });

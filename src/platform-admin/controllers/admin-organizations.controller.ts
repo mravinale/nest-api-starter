@@ -16,6 +16,7 @@ import { Session } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
 import { RolesGuard, Roles, PermissionsGuard, RequirePermissions } from '../../common';
 import { AdminOrganizationsService } from '../services';
+import { filterAssignableRoles, getRoleLevel } from '../services/admin-organizations.service';
 import { PaginationQuery, UpdateOrganizationDto } from '../dto';
 
 /**
@@ -237,6 +238,15 @@ export class AdminOrganizationsController {
     const { role, activeOrgId } = this.getSessionInfo(session);
     this.requireActiveOrgForManager(role, activeOrgId);
     this.assertManagerCanAccessOrg(role, activeOrgId, id);
+
+    // Validate that the requester can assign the requested role
+    const requestedRoleLevel = getRoleLevel(body.role);
+    const requesterRoleLevel = getRoleLevel(role);
+    if (requestedRoleLevel > requesterRoleLevel) {
+      throw new ForbiddenException(
+        `Cannot assign role '${body.role}' — exceeds your permission level`,
+      );
+    }
 
     const org = await this.orgService.findById(id);
     if (!org) {
