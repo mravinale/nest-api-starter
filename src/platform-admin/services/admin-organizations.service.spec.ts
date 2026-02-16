@@ -1,6 +1,11 @@
 import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import {
   AdminOrganizationsService,
   ROLE_HIERARCHY,
   getRoleLevel,
@@ -147,6 +152,53 @@ describe('AdminOrganizationsService', () => {
         ),
       ).rejects.toThrow('Role not allowed');
     });
+
+    it('should throw NotFoundException when organization does not exist', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.createInvitation(
+          'org-missing',
+          'invitee@example.com',
+          'member',
+          'admin',
+          { id: 'actor-1', email: 'admin@example.com', name: 'Admin User' },
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('should throw BadRequestException when invitee is already a member', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'org-1', name: 'Test Org', slug: 'test-org' })
+        .mockResolvedValueOnce({ id: 'member-1' });
+
+      await expect(
+        service.createInvitation(
+          'org-1',
+          'invitee@example.com',
+          'member',
+          'admin',
+          { id: 'actor-1', email: 'admin@example.com', name: 'Admin User' },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('should throw ConflictException when pending invitation already exists', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'org-1', name: 'Test Org', slug: 'test-org' })
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'inv-existing' });
+
+      await expect(
+        service.createInvitation(
+          'org-1',
+          'invitee@example.com',
+          'member',
+          'admin',
+          { id: 'actor-1', email: 'admin@example.com', name: 'Admin User' },
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
   });
 
   describe('findById', () => {
@@ -263,6 +315,14 @@ describe('AdminOrganizationsService', () => {
       await expect(service.updateMemberRole('org-1', 'member-1', 'member', 'manager')).rejects.toThrow(
         'Managers can only change member roles',
       );
+    });
+
+    it('should throw NotFoundException when member does not exist', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.updateMemberRole('org-1', 'missing-member', 'member', 'admin'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('should block downgrading last admin in organization', async () => {

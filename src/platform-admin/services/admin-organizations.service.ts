@@ -1,4 +1,11 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { DatabaseService } from '../../database';
 import { EmailService } from '../../email/email.service';
 import {
@@ -305,7 +312,7 @@ export class AdminOrganizationsService {
       [organizationId],
     );
     if (!organization) {
-      throw new Error('Organization not found');
+      throw new NotFoundException('Organization not found');
     }
 
     const existingMember = await this.db.queryOne<{ id: string }>(
@@ -316,7 +323,7 @@ export class AdminOrganizationsService {
       [organizationId, normalizedEmail],
     );
     if (existingMember) {
-      throw new Error('User is already a member of this organization');
+      throw new BadRequestException('User is already a member of this organization');
     }
 
     const existingInvitation = await this.db.queryOne<{ id: string }>(
@@ -324,7 +331,7 @@ export class AdminOrganizationsService {
       [organizationId, normalizedEmail, 'pending'],
     );
     if (existingInvitation) {
-      throw new Error('Invitation already exists for this user');
+      throw new ConflictException('Invitation already exists for this user');
     }
 
     const invitationId = this.generateId();
@@ -351,7 +358,7 @@ export class AdminOrganizationsService {
     );
 
     if (!invitation) {
-      throw new Error('Failed to create invitation');
+      throw new InternalServerErrorException('Failed to create invitation');
     }
 
     try {
@@ -512,7 +519,7 @@ export class AdminOrganizationsService {
     );
 
     if (!member) {
-      throw new Error('Member not found');
+      throw new NotFoundException('Member not found');
     }
 
     if (platformRole === 'manager' && member.role !== 'member') {
@@ -560,7 +567,7 @@ export class AdminOrganizationsService {
     );
 
     if (!member) {
-      throw new Error('Member not found');
+      throw new NotFoundException('Member not found');
     }
 
     if (platformRole === 'manager' && member.role !== 'member') {
@@ -584,7 +591,7 @@ export class AdminOrganizationsService {
     );
 
     if (result.length === 0) {
-      throw new Error('Member not found');
+      throw new NotFoundException('Member not found');
     }
 
     return { success: true };
