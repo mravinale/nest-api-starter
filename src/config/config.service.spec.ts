@@ -36,4 +36,33 @@ describe('ConfigService', () => {
       ]);
     });
   });
+
+  describe('shouldEnforceResendTestRecipients', () => {
+    it('returns true when running in NODE_ENV=test', () => {
+      process.env.NODE_ENV = 'test';
+      delete process.env.DOTENV_CONFIG_PATH;
+
+      const configService = new ConfigService();
+
+      expect(configService.shouldEnforceResendTestRecipients()).toBe(true);
+    });
+
+    it('returns true when DOTENV_CONFIG_PATH points to .env.test', () => {
+      process.env.NODE_ENV = 'development';
+      process.env.DOTENV_CONFIG_PATH = '/tmp/project/.env.test';
+
+      const configService = new ConfigService();
+
+      expect(configService.shouldEnforceResendTestRecipients()).toBe(true);
+    });
+
+    it('respects explicit override when ENFORCE_RESEND_TEST_RECIPIENTS=false', () => {
+      process.env.NODE_ENV = 'test';
+      process.env.ENFORCE_RESEND_TEST_RECIPIENTS = 'false';
+
+      const configService = new ConfigService();
+
+      expect(configService.shouldEnforceResendTestRecipients()).toBe(false);
+    });
+  });
 });

@@ -52,6 +52,17 @@ export class ConfigService {
     return process.env.NODE_ENV === 'test';
   }
 
+  shouldEnforceResendTestRecipients(): boolean {
+    const override = process.env.ENFORCE_RESEND_TEST_RECIPIENTS;
+    if (override === 'true') return true;
+    if (override === 'false') return false;
+
+    const dotenvConfigPath = process.env.DOTENV_CONFIG_PATH?.toLowerCase() || '';
+    const usesEnvTestFile = dotenvConfigPath.endsWith('.env.test');
+
+    return this.isTestMode() || usesEnvTestFile;
+  }
+
   validateEnvironment(): void {
     const required = ['AUTH_SECRET', 'DATABASE_URL'];
     const missing = required.filter((key) => !process.env[key]);

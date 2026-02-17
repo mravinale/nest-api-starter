@@ -78,6 +78,10 @@ TRUSTED_ORIGINS=http://localhost:5173,http://localhost:5174
 FE_URL=http://localhost:5173
 RESEND_API_KEY=re_xxxxxxxxxxxxx
 FROM_EMAIL=noreply@yourdomain.com
+# Optional: force/disable test-recipient guardrail
+# true => only allow delivered@resend.dev / delivered+label@resend.dev recipients
+# false => disable guardrail even in test contexts
+ENFORCE_RESEND_TEST_RECIPIENTS=
 ```
 
 ### 5. Start Server
@@ -316,6 +320,7 @@ psql -d nestjs-api-starter -f src/rbac/migrations/unify-roles.sql
 | `FE_URL` | ❌ | `http://localhost:5173` | Frontend URL for email links |
 | `RESEND_API_KEY` | ❌ | - | Resend API key for emails |
 | `FROM_EMAIL` | ❌ | - | Sender email address |
+| `ENFORCE_RESEND_TEST_RECIPIENTS` | ❌ | auto | Test/e2e guardrail for recipient domains (`true`/`false` override) |
 | `NODE_ENV` | ❌ | `development` | Environment (test disables email verification) |
 
 ---
@@ -338,6 +343,8 @@ E2E tests are in the companion frontend project (`spa-api-starter`):
 cd ../spa-api-starter
 npx playwright test --headed --workers=1
 ```
+
+When test-recipient guardrail is active (default in test contexts), email recipients must use Resend test addresses such as `delivered@resend.dev` or `delivered+label@resend.dev`.
 
 **Test Coverage (123 tests):**
 - Authentication flows (signup, login, password reset)

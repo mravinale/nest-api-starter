@@ -3,6 +3,7 @@ import { DatabaseService } from '../src/database';
 import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { uniqueResendDeliveredEmail } from '../src/common/resend-test-email';
 
 export interface TestUser {
   id: string;
@@ -183,19 +184,19 @@ export class TestHelpers {
     // Sign up test users through Better Auth
     const adminSignUp = await this.signUpAndGetCookie({
       name: 'Test Admin',
-      email: `admin-${Date.now()}@test.com`,
+      email: uniqueResendDeliveredEmail('admin-e2e-user'),
       password: 'SecurePass123!',
     });
 
     const managerSignUp = await this.signUpAndGetCookie({
       name: 'Test Manager',
-      email: `manager-${Date.now()}@test.com`,
+      email: uniqueResendDeliveredEmail('manager-e2e-user'),
       password: 'SecurePass123!',
     });
 
     const memberSignUp = await this.signUpAndGetCookie({
       name: 'Test Member',
-      email: `member-${Date.now()}@test.com`,
+      email: uniqueResendDeliveredEmail('member-e2e-user'),
       password: 'SecurePass123!',
     });
 
