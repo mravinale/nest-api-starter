@@ -89,6 +89,29 @@ export class AdminService {
     }
   }
 
+  private async resolveRoleAssignmentOrganizationId(params: {
+    targetUserId: string;
+    platformRole: 'admin' | 'manager';
+    activeOrganizationId: string | null;
+  }): Promise<string | null> {
+    const { targetUserId, platformRole, activeOrganizationId } = params;
+
+    if (activeOrganizationId) {
+      return activeOrganizationId;
+    }
+
+    if (platformRole !== 'admin') {
+      return null;
+    }
+
+    const member = await this.db.queryOne<{ organizationId: string }>(
+      'SELECT "organizationId" as "organizationId" FROM member WHERE "userId" = $1 ORDER BY "createdAt" DESC LIMIT 1',
+      [targetUserId],
+    );
+
+    return member?.organizationId ?? null;
+  }
+
   async getCreateUserMetadata(platformRole: 'admin' | 'manager', activeOrganizationId: string | null) {
     const roles = await this.db.query<{
       name: string;
@@ -196,6 +219,15 @@ export class AdminService {
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
     }
 
+    const organizationIdForRole =
+      input.role === 'admin'
+        ? null
+        : await this.resolveRoleAssignmentOrganizationId({
+            targetUserId: input.userId,
+            platformRole,
+            activeOrganizationId,
+          });
+
     await this.db.transaction(async (query) => {
       await query('UPDATE "user" SET role = $1, "updatedAt" = NOW() WHERE id = $2', [
         input.role,
@@ -205,7 +237,7 @@ export class AdminService {
       if (input.role === 'admin') {
         await query('DELETE FROM member WHERE "userId" = $1', [input.userId]);
       } else {
-        const orgId = activeOrganizationId;
+        const orgId = organizationIdForRole;
         if (!orgId) {
           throw new ForbiddenException('Active organization required');
         }

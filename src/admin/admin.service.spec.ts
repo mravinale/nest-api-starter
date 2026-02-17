@@ -143,6 +143,58 @@ describe('AdminService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
+    it('should allow admin to change manager to member using target membership org when no active organization', async () => {
+      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
+        if (sql.includes('SELECT id FROM member')) {
+          return [{ id: 'member-row' }];
+        }
+        return [];
+      });
+
+      dbService.queryOne
+        .mockResolvedValueOnce({ role: 'manager' })
+        .mockResolvedValueOnce({ organizationId: 'org-1' })
+        .mockResolvedValueOnce({ ...mockUser, id: 'target-1', role: 'member' });
+
+      dbService.transaction.mockImplementation(async <T>(
+        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
+      ): Promise<T> => callback(queryMock));
+
+      const result = await service.setUserRole(
+        { userId: 'target-1', role: 'member' },
+        'admin',
+        null,
+        'actor-admin',
+      );
+
+      expect(result.role).toBe('member');
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE member SET role = $1'),
+        ['member', 'org-1', 'target-1'],
+      );
+    });
+
+    it('should throw ForbiddenException for admin role change when no org can be resolved', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ role: 'manager' })
+        .mockResolvedValueOnce(null);
+
+      const queryMock = jest.fn(async (): Promise<unknown[]> => []);
+
+      dbService.transaction.mockImplementation(async <T>(
+        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
+      ): Promise<T> => callback(queryMock));
+
+      await expect(
+        service.setUserRole(
+          { userId: 'target-1', role: 'member' },
+          'admin',
+          null,
+          'actor-admin',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
     it('should allow self-update', async () => {
       dbService.queryOne.mockResolvedValueOnce({ ...mockUser, name: 'Self Updated' });
 
