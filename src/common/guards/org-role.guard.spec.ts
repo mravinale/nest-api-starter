@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { OrgRoleGuard, ORG_ROLES_KEY } from './org-role.guard';
+import { OrgRoleGuard, OrgRoles, ORG_ROLES_KEY } from './org-role.guard';
 
 describe('OrgRoleGuard', () => {
   let guard: OrgRoleGuard;
@@ -87,8 +87,6 @@ describe('OrgRoleGuard', () => {
 
 describe('OrgRoles decorator', () => {
   it('should define org roles metadata on a method', () => {
-    const { OrgRoles } = require('./org-role.guard');
-
     class TestController {
       testMethod() {}
     }
@@ -109,8 +107,6 @@ describe('OrgRoles decorator', () => {
   });
 
   it('should define org roles metadata on a class', () => {
-    const { OrgRoles } = require('./org-role.guard');
-
     class TestController {}
 
     OrgRoles('admin')(TestController);
