@@ -10,6 +10,8 @@ import {
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
+import { Session } from '@thallesp/nestjs-better-auth';
+import type { UserSession } from '@thallesp/nestjs-better-auth';
 import { RolesGuard, Roles, PermissionsGuard, RequirePermissions } from '../common';
 import { RoleService, PermissionService } from './services';
 import { CreateRoleDto, UpdateRoleDto, AssignPermissionsDto } from './dto';
@@ -50,6 +52,30 @@ export class RbacController {
     if (!Array.isArray(dto?.permissionIds)) {
       throw new HttpException('permissionIds must be an array', HttpStatus.BAD_REQUEST);
     }
+  }
+
+  // ============ My Permissions ============
+
+  /**
+   * Get the current authenticated user's effective permissions.
+   * Admin users receive all permissions; others receive their DB role_permissions.
+   * Accessible by any authenticated admin/manager (class-level @Roles already enforces this).
+   */
+  @Get('my-permissions')
+  async getMyPermissions(@Session() session: UserSession) {
+    const userRole = session?.user?.role as string;
+
+    if (userRole === 'admin') {
+      const allPermissions = await this.permissionService.findAll();
+      return {
+        data: allPermissions.map((p) => `${p.resource}:${p.action}`),
+      };
+    }
+
+    const permissions = await this.roleService.getUserPermissions(userRole);
+    return {
+      data: permissions.map((p) => `${p.resource}:${p.action}`),
+    };
   }
 
   // ============ Roles ============

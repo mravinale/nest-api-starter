@@ -9,7 +9,7 @@ import { defaultStatements, adminAc } from "better-auth/plugins/admin/access";
  */
 export const statement = {
   ...defaultStatements,
-  organization: ["list", "get", "update", "invite"],
+  organization: ["create", "list", "get", "update", "invite"],
   role: ["list", "get"],
 } as const;
 
@@ -33,7 +33,7 @@ export const adminRole = ac.newRole({
 export const managerRole = ac.newRole({
   user: ["create", "list", "get", "update", "ban", "set-role", "set-password"],
   session: ["list", "revoke"],
-  organization: ["list", "get", "update", "invite"],
+  organization: ["create", "list", "get", "update", "invite"],
   role: ["list", "get"],
 });
 

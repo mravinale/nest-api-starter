@@ -226,6 +226,7 @@ export class RbacMigrationService implements OnModuleInit {
         { resource: 'session', action: 'read' },
         { resource: 'session', action: 'revoke' },
         // Organization management (their own org)
+        { resource: 'organization', action: 'create' },
         { resource: 'organization', action: 'read' },
         { resource: 'organization', action: 'update' },
         { resource: 'organization', action: 'invite' },
