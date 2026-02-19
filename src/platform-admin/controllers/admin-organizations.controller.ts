@@ -31,6 +31,7 @@ export class AdminOrganizationsController {
   constructor(private readonly orgService: AdminOrganizationsService) {}
 
   private readonly allowedMemberRoles = ['admin', 'manager', 'member'] as const;
+  private readonly slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
   private getSessionInfo(session: UserSession): { role: 'admin' | 'manager'; activeOrgId: string | null } {
     const role = session?.user?.role as string;
@@ -81,6 +82,57 @@ export class AdminOrganizationsController {
     if (!body?.role || !this.allowedMemberRoles.includes(body.role as (typeof this.allowedMemberRoles)[number])) {
       throw new HttpException('invalid role', HttpStatus.BAD_REQUEST);
     }
+  }
+
+  private validateCreateOrganizationPayload(body: {
+    name?: string;
+    slug?: string;
+    logo?: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    const name = body?.name?.trim();
+    const slug = body?.slug?.trim().toLowerCase();
+
+    if (!name) {
+      throw new HttpException('name is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!slug) {
+      throw new HttpException('slug is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!this.slugRegex.test(slug)) {
+      throw new HttpException('invalid slug', HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
+   * Create a new organization.
+   * Managers can create organizations only when explicitly granted organization:create.
+   */
+  @Post()
+  @RequirePermissions('organization:create')
+  async create(
+    @Session() session: UserSession,
+    @Body() body: { name: string; slug: string; logo?: string; metadata?: Record<string, unknown> },
+  ) {
+    this.validateCreateOrganizationPayload(body);
+    const { role } = this.getSessionInfo(session);
+
+    const org = await this.orgService.create(
+      {
+        name: body.name,
+        slug: body.slug,
+        logo: body.logo,
+        metadata: body.metadata,
+      },
+      {
+        id: session.user.id,
+        platformRole: role,
+      },
+    );
+
+    return { data: org };
   }
 
   /**

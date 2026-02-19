@@ -18,11 +18,12 @@ import {
   requireAdminOrManager,
   requireActiveOrganizationIdForManager,
 } from './admin.utils';
-import { PermissionsGuard, RequirePermissions } from '../common';
+import { RolesGuard, Roles, PermissionsGuard, RequirePermissions } from '../common';
 import { PASSWORD_POLICY } from '../common/password-policy';
 
 @Controller('api/admin/users')
-@UseGuards(PermissionsGuard)
+@UseGuards(RolesGuard, PermissionsGuard)
+@Roles('admin', 'manager')
 export class AdminUsersController {
   constructor(private readonly adminService: AdminService) {}
 
