@@ -65,6 +65,8 @@ export class AdminOrganizationsService {
     private readonly emailService: EmailService,
   ) {}
 
+  private readonly slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
   /**
    * Get all roles from the database for organization membership.
    * When requesterRole is provided, assignableRoles is filtered to roles
@@ -97,6 +99,75 @@ export class AdminOrganizationsService {
       })),
       assignableRoles,
     };
+  }
+
+  /**
+   * Create a new organization and add the creator as a member.
+   */
+  async create(
+    input: {
+      name: string;
+      slug: string;
+      logo?: string;
+      metadata?: Record<string, unknown>;
+    },
+    actor: {
+      id: string;
+      platformRole: 'admin' | 'manager';
+    },
+  ): Promise<Organization> {
+    const name = input.name.trim();
+    const slug = input.slug.trim().toLowerCase();
+
+    if (!name) {
+      throw new BadRequestException('name is required');
+    }
+
+    if (!slug) {
+      throw new BadRequestException('slug is required');
+    }
+
+    if (!this.slugRegex.test(slug)) {
+      throw new BadRequestException('invalid slug');
+    }
+
+    const organizationId = this.generateId();
+    const memberId = this.generateId();
+    const creatorMemberRole = actor.platformRole === 'admin' ? 'admin' : 'manager';
+    const metadataJson = input.metadata === undefined ? null : JSON.stringify(input.metadata);
+
+    await this.db.transaction(async (query) => {
+      const existing = (await query(
+        'SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)',
+        [slug],
+      )) as Array<{ id: string }>;
+      if (existing.length > 0) {
+        throw new ConflictException('Organization slug already exists');
+      }
+
+      await query(
+        `INSERT INTO organization (id, name, slug, logo, "createdAt", metadata)
+         VALUES ($1, $2, $3, $4, NOW(), $5)`,
+        [organizationId, name, slug, input.logo ?? null, metadataJson],
+      );
+
+      await query(
+        `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [memberId, organizationId, actor.id, creatorMemberRole],
+      );
+    });
+
+    const row = await this.db.queryOne<OrganizationRow>(
+      'SELECT * FROM organization WHERE id = $1',
+      [organizationId],
+    );
+
+    if (!row) {
+      throw new InternalServerErrorException('Failed to create organization');
+    }
+
+    return rowToOrganization(row);
   }
 
   /**

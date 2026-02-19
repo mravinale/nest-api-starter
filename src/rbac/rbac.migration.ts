@@ -20,6 +20,10 @@ export class RbacMigrationService implements OnModuleInit {
       { name: 'rbac_001_create_tables', up: () => this.createRbacTables() },
       { name: 'rbac_002_migrate_old_role_names', up: () => this.migrateOldRoleNames() },
       { name: 'rbac_003_seed_default_data', up: () => this.seedDefaultData() },
+      {
+        name: 'rbac_004_add_manager_org_create_permission',
+        up: () => this.addManagerOrganizationCreatePermission(),
+      },
     ];
 
     let pendingCount = 0;
@@ -271,5 +275,36 @@ export class RbacMigrationService implements OnModuleInit {
     }
 
     console.log('✅ RBAC default data seeded');
+  }
+
+  /**
+   * Backfill manager organization:create permission for existing deployments.
+   * This must be a tracked migration because rbac_003 only runs once.
+   */
+  async addManagerOrganizationCreatePermission(): Promise<void> {
+    await this.db.query(
+      `INSERT INTO permissions (resource, action, description)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (resource, action) DO NOTHING`,
+      ['organization', 'create', 'Create organizations'],
+    );
+
+    const managerRole = await this.db.queryOne<{ id: string }>(
+      `SELECT id FROM roles WHERE name = 'manager'`,
+    );
+
+    const orgCreatePermission = await this.db.queryOne<{ id: string }>(
+      `SELECT id FROM permissions WHERE resource = $1 AND action = $2`,
+      ['organization', 'create'],
+    );
+
+    if (managerRole && orgCreatePermission) {
+      await this.db.query(
+        `INSERT INTO role_permissions (role_id, permission_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [managerRole.id, orgCreatePermission.id],
+      );
+    }
   }
 }
