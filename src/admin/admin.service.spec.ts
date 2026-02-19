@@ -1,4 +1,22 @@
 import { jest } from '@jest/globals';
+
+jest.mock('better-auth/crypto', () => ({
+  hashPassword: jest.fn(async (password: string) => `hashed:${password}`),
+  verifyPassword: jest.fn(async () => true),
+}));
+
+jest.mock('jose', () => ({
+  SignJWT: jest.fn().mockImplementation(() => ({
+    setProtectedHeader: jest.fn().mockReturnThis(),
+    setIssuedAt: jest.fn().mockReturnThis(),
+    setExpirationTime: jest.fn().mockReturnThis(),
+    sign: jest.fn(async () => 'mock.jwt.token'),
+  })),
+  importPKCS8: jest.fn(async () => ({})),
+  importSPKI: jest.fn(async () => ({})),
+  jwtVerify: jest.fn(async () => ({ payload: {} })),
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException } from '@nestjs/common';
 import { AdminService, CreateUserInput } from './admin.service';
@@ -462,6 +480,207 @@ describe('AdminService', () => {
         platformRole: 'manager',
         activeOrganizationId: null,
       })).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('createUser - happy path', () => {
+    it('should allow admin to create a member with organization', async () => {
+      const createdUser = {
+        id: 'new-user-1',
+        name: 'New Member',
+        email: 'newmember@example.com',
+        role: 'member',
+        emailVerified: false,
+        banned: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
+        if (sql.includes('SELECT id FROM "user"')) return [];
+        return [];
+      });
+
+      dbService.transaction.mockImplementation(async <T>(
+        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
+      ): Promise<T> => callback(queryMock));
+
+      dbService.queryOne.mockResolvedValueOnce(createdUser);
+
+      const result = await service.createUser(
+        {
+          name: 'New Member',
+          email: 'newmember@example.com',
+          password: 'SecurePass123!',
+          role: 'member',
+          organizationId: 'org-1',
+        },
+        'admin',
+        null,
+      );
+
+      expect(result).toEqual(createdUser);
+    });
+
+    it('should allow admin to create an admin user without organization', async () => {
+      const createdUser = {
+        id: 'new-admin-1',
+        name: 'New Admin',
+        email: 'newadmin@example.com',
+        role: 'admin',
+        emailVerified: false,
+        banned: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
+        if (sql.includes('SELECT id FROM "user"')) return [];
+        return [];
+      });
+
+      dbService.transaction.mockImplementation(async <T>(
+        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
+      ): Promise<T> => callback(queryMock));
+
+      dbService.queryOne.mockResolvedValueOnce(createdUser);
+
+      const result = await service.createUser(
+        {
+          name: 'New Admin',
+          email: 'newadmin@example.com',
+          password: 'SecurePass123!',
+          role: 'admin',
+        },
+        'admin',
+        null,
+      );
+
+      expect(result).toEqual(createdUser);
+    });
+
+    it('should throw ForbiddenException when user already exists', async () => {
+      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
+        if (sql.includes('SELECT id FROM "user"')) return [{ id: 'existing-user' }];
+        return [];
+      });
+
+      dbService.transaction.mockImplementation(async <T>(
+        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
+      ): Promise<T> => callback(queryMock));
+
+      await expect(
+        service.createUser(
+          {
+            name: 'Existing User',
+            email: 'existing@example.com',
+            password: 'SecurePass123!',
+            role: 'member',
+            organizationId: 'org-1',
+          },
+          'admin',
+          null,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('listUsers with search', () => {
+    it('should filter users by searchValue', async () => {
+      const filteredUsers = [mockUser];
+      dbService.query.mockResolvedValueOnce(filteredUsers);
+      dbService.queryOne.mockResolvedValueOnce({ count: '1' });
+
+      const result = await service.listUsers({
+        limit: 10,
+        offset: 0,
+        searchValue: 'test',
+        platformRole: 'admin',
+        activeOrganizationId: null,
+      });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.total).toBe(1);
+    });
+
+    it('should filter users by org for manager', async () => {
+      dbService.query.mockResolvedValueOnce([mockUser]);
+      dbService.queryOne.mockResolvedValueOnce({ count: '1' });
+
+      const result = await service.listUsers({
+        limit: 10,
+        offset: 0,
+        platformRole: 'manager',
+        activeOrganizationId: 'org-1',
+      });
+
+      expect(result.data).toHaveLength(1);
+    });
+  });
+
+  describe('listUserSessions for manager', () => {
+    it('should list sessions for manager when user is in org', async () => {
+      const mockSessions = [{ id: 'session-1', userId: 'user-1', token: 'token-1' }];
+      dbService.queryOne.mockResolvedValueOnce({ id: 'member-row' });
+      dbService.query.mockResolvedValueOnce(mockSessions);
+
+      const result = await service.listUserSessions({
+        userId: 'user-1',
+        platformRole: 'manager',
+        activeOrganizationId: 'org-1',
+      });
+
+      expect(result).toHaveLength(1);
+    });
+
+    it('should throw ForbiddenException for manager when user is not in org', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      await expect(service.listUserSessions({
+        userId: 'user-1',
+        platformRole: 'manager',
+        activeOrganizationId: 'org-1',
+      })).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('revokeSession for manager', () => {
+    it('should allow manager to revoke session for user in org', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ userId: 'user-1' });
+      dbService.queryOne.mockResolvedValueOnce({ id: 'member-row' });
+      dbService.query.mockResolvedValueOnce([]);
+
+      const result = await service.revokeSession({ sessionToken: 'token-123' }, 'manager', 'org-1');
+      expect(result.success).toBe(true);
+    });
+
+    it('should return success when session not found for manager', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      const result = await service.revokeSession({ sessionToken: 'nonexistent' }, 'manager', 'org-1');
+      expect(result.success).toBe(true);
+    });
+
+    it('should throw ForbiddenException for manager without active org', async () => {
+      await expect(
+        service.revokeSession({ sessionToken: 'token-123' }, 'manager', null),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('revokeAllSessions for manager', () => {
+    it('should allow manager to revoke all sessions for user in org', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ id: 'member-row' });
+      dbService.query.mockResolvedValueOnce([]);
+
+      const result = await service.revokeAllSessions({ userId: 'user-1' }, 'manager', 'org-1');
+      expect(result.success).toBe(true);
+    });
+
+    it('should throw ForbiddenException for manager without active org', async () => {
+      await expect(
+        service.revokeAllSessions({ userId: 'user-1' }, 'manager', null),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 

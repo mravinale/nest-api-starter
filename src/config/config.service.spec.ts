@@ -11,6 +11,62 @@ describe('ConfigService', () => {
     process.env = originalEnv;
   });
 
+  describe('getPort', () => {
+    it('should return default port 3000 when PORT is not set', () => {
+      delete process.env.PORT;
+      const configService = new ConfigService();
+      expect(configService.getPort()).toBe(3000);
+    });
+
+    it('should return custom port from PORT env var', () => {
+      process.env.PORT = '8080';
+      const configService = new ConfigService();
+      expect(configService.getPort()).toBe(8080);
+    });
+  });
+
+  describe('getAuthSecret', () => {
+    it('should return AUTH_SECRET when set', () => {
+      process.env.AUTH_SECRET = 'my-secret-key';
+      const configService = new ConfigService();
+      expect(configService.getAuthSecret()).toBe('my-secret-key');
+    });
+
+    it('should throw when AUTH_SECRET is not set', () => {
+      delete process.env.AUTH_SECRET;
+      const configService = new ConfigService();
+      expect(() => configService.getAuthSecret()).toThrow('AUTH_SECRET environment variable is required');
+    });
+  });
+
+  describe('getBaseUrl', () => {
+    it('should return default base URL when BASE_URL is not set', () => {
+      delete process.env.BASE_URL;
+      const configService = new ConfigService();
+      expect(configService.getBaseUrl()).toBe('http://localhost:3000');
+    });
+
+    it('should return custom BASE_URL when set', () => {
+      process.env.BASE_URL = 'https://api.example.com';
+      const configService = new ConfigService();
+      expect(configService.getBaseUrl()).toBe('https://api.example.com');
+    });
+  });
+
+  describe('getDatabaseUrl', () => {
+    it('should return DATABASE_URL when set', () => {
+      process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/db';
+      const configService = new ConfigService();
+      expect(configService.getDatabaseUrl()).toBe('postgresql://user:pass@localhost:5432/db');
+    });
+
+    it('should throw when DATABASE_URL is not set', () => {
+      delete process.env.DATABASE_URL;
+      const configService = new ConfigService();
+      expect(() => configService.getDatabaseUrl()).toThrow('DATABASE_URL environment variable is required');
+    });
+  });
+
   describe('getTrustedOrigins', () => {
     it('should read TRUSTED_ORIGINS from the environment', () => {
       process.env.TRUSTED_ORIGINS = 'http://localhost:5173,http://127.0.0.1:65520';
@@ -37,6 +93,92 @@ describe('ConfigService', () => {
     });
   });
 
+  describe('getResendApiKey', () => {
+    it('should return RESEND_API_KEY when set', () => {
+      process.env.RESEND_API_KEY = 're_test_key_123';
+      const configService = new ConfigService();
+      expect(configService.getResendApiKey()).toBe('re_test_key_123');
+    });
+
+    it('should return empty string when RESEND_API_KEY is not set', () => {
+      delete process.env.RESEND_API_KEY;
+      const configService = new ConfigService();
+      expect(configService.getResendApiKey()).toBe('');
+    });
+  });
+
+  describe('getFromEmail', () => {
+    it('should return FROM_EMAIL when set', () => {
+      process.env.FROM_EMAIL = 'hello@myapp.com';
+      const configService = new ConfigService();
+      expect(configService.getFromEmail()).toBe('hello@myapp.com');
+    });
+
+    it('should return default from email when FROM_EMAIL is not set', () => {
+      delete process.env.FROM_EMAIL;
+      const configService = new ConfigService();
+      expect(configService.getFromEmail()).toBe('noreply@example.com');
+    });
+  });
+
+  describe('getFeUrl', () => {
+    it('should return FE_URL when set', () => {
+      process.env.FE_URL = 'https://app.example.com';
+      const configService = new ConfigService();
+      expect(configService.getFeUrl()).toBe('https://app.example.com');
+    });
+
+    it('should return default FE URL when FE_URL is not set', () => {
+      delete process.env.FE_URL;
+      const configService = new ConfigService();
+      expect(configService.getFeUrl()).toBe('http://localhost:5173');
+    });
+  });
+
+  describe('isTestMode', () => {
+    it('should return true when NODE_ENV is test', () => {
+      process.env.NODE_ENV = 'test';
+      const configService = new ConfigService();
+      expect(configService.isTestMode()).toBe(true);
+    });
+
+    it('should return false when NODE_ENV is not test', () => {
+      process.env.NODE_ENV = 'production';
+      const configService = new ConfigService();
+      expect(configService.isTestMode()).toBe(false);
+    });
+  });
+
+  describe('validateEnvironment', () => {
+    it('should not throw when all required env vars are present', () => {
+      process.env.AUTH_SECRET = 'secret';
+      process.env.DATABASE_URL = 'postgresql://localhost/db';
+      const configService = new ConfigService();
+      expect(() => configService.validateEnvironment()).not.toThrow();
+    });
+
+    it('should throw when AUTH_SECRET is missing', () => {
+      delete process.env.AUTH_SECRET;
+      process.env.DATABASE_URL = 'postgresql://localhost/db';
+      const configService = new ConfigService();
+      expect(() => configService.validateEnvironment()).toThrow('Missing required environment variables: AUTH_SECRET');
+    });
+
+    it('should throw when DATABASE_URL is missing', () => {
+      process.env.AUTH_SECRET = 'secret';
+      delete process.env.DATABASE_URL;
+      const configService = new ConfigService();
+      expect(() => configService.validateEnvironment()).toThrow('Missing required environment variables: DATABASE_URL');
+    });
+
+    it('should list all missing vars when multiple are absent', () => {
+      delete process.env.AUTH_SECRET;
+      delete process.env.DATABASE_URL;
+      const configService = new ConfigService();
+      expect(() => configService.validateEnvironment()).toThrow('AUTH_SECRET');
+    });
+  });
+
   describe('shouldEnforceResendTestRecipients', () => {
     it('returns true when running in NODE_ENV=test', () => {
       process.env.NODE_ENV = 'test';
@@ -59,6 +201,26 @@ describe('ConfigService', () => {
     it('respects explicit override when ENFORCE_RESEND_TEST_RECIPIENTS=false', () => {
       process.env.NODE_ENV = 'test';
       process.env.ENFORCE_RESEND_TEST_RECIPIENTS = 'false';
+
+      const configService = new ConfigService();
+
+      expect(configService.shouldEnforceResendTestRecipients()).toBe(false);
+    });
+
+    it('returns true when ENFORCE_RESEND_TEST_RECIPIENTS=true explicitly', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.DOTENV_CONFIG_PATH;
+      process.env.ENFORCE_RESEND_TEST_RECIPIENTS = 'true';
+
+      const configService = new ConfigService();
+
+      expect(configService.shouldEnforceResendTestRecipients()).toBe(true);
+    });
+
+    it('returns false in production with no overrides', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.DOTENV_CONFIG_PATH;
+      delete process.env.ENFORCE_RESEND_TEST_RECIPIENTS;
 
       const configService = new ConfigService();
 

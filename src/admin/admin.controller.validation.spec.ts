@@ -1,4 +1,29 @@
 import { jest } from '@jest/globals';
+
+jest.mock('@thallesp/nestjs-better-auth', () => ({
+  Session: () => () => {},
+  AllowAnonymous: () => () => {},
+  BetterAuthGuard: class {},
+  BetterAuthModule: { forRoot: jest.fn(() => ({ module: class {} })) },
+}));
+
+jest.mock('better-auth/crypto', () => ({
+  hashPassword: jest.fn(async (p: string) => `hashed:${p}`),
+  verifyPassword: jest.fn(async () => true),
+}));
+
+jest.mock('jose', () => ({
+  SignJWT: jest.fn().mockImplementation(() => ({
+    setProtectedHeader: jest.fn().mockReturnThis(),
+    setIssuedAt: jest.fn().mockReturnThis(),
+    setExpirationTime: jest.fn().mockReturnThis(),
+    sign: jest.fn(async () => 'mock.jwt.token'),
+  })),
+  importPKCS8: jest.fn(async () => ({})),
+  importSPKI: jest.fn(async () => ({})),
+  jwtVerify: jest.fn(async () => ({ payload: {} })),
+}));
+
 import { HttpStatus } from '@nestjs/common';
 import { AdminUsersController } from './admin.controller';
 import { AdminService } from './admin.service';

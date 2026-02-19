@@ -1,4 +1,12 @@
 import { jest } from '@jest/globals';
+
+jest.mock('@thallesp/nestjs-better-auth', () => ({
+  Session: () => () => {},
+  AllowAnonymous: () => () => {},
+  BetterAuthGuard: class {},
+  BetterAuthModule: { forRoot: jest.fn(() => ({ module: class {} })) },
+}));
+
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { RbacController } from './rbac.controller';
 import { RoleService, PermissionService } from './services';
