@@ -10,6 +10,7 @@ describe('AdminOrganizationsController validation', () => {
 
   beforeEach(() => {
     orgService = {
+      create: jest.fn(),
       getRoles: jest.fn(),
       findAll: jest.fn(),
       findById: jest.fn(),
@@ -64,6 +65,28 @@ describe('AdminOrganizationsController validation', () => {
       controller.createInvitation(adminSession, 'org-1', {
         email: 'invalid-email',
         role: 'member',
+      }),
+    ).rejects.toMatchObject({
+      status: HttpStatus.BAD_REQUEST,
+    });
+  });
+
+  it('rejects create when name is missing', async () => {
+    await expect(
+      controller.create(adminSession, {
+        name: '',
+        slug: 'new-org',
+      }),
+    ).rejects.toMatchObject({
+      status: HttpStatus.BAD_REQUEST,
+    });
+  });
+
+  it('rejects create when slug is invalid', async () => {
+    await expect(
+      controller.create(adminSession, {
+        name: 'New Org',
+        slug: 'Invalid Slug',
       }),
     ).rejects.toMatchObject({
       status: HttpStatus.BAD_REQUEST,

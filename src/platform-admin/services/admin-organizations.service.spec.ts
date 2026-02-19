@@ -99,6 +99,52 @@ describe('AdminOrganizationsService', () => {
     });
   });
 
+  describe('create', () => {
+    it('should create organization and manager membership for manager actor', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, created_at: new Date() });
+
+      dbService.transaction.mockImplementation(async (callback) => {
+        const mockQuery = (async () => []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
+        await callback(mockQuery);
+        return undefined;
+      });
+
+      const created = await service.create(
+        {
+          name: 'New Org',
+          slug: 'new-org',
+        },
+        {
+          id: 'manager-1',
+          platformRole: 'manager',
+        },
+      );
+
+      expect(created.name).toBe('New Org');
+      expect(created.slug).toBe('new-org');
+      expect(dbService.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('should reject duplicate organization slug', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ id: 'existing-org' });
+
+      await expect(
+        service.create(
+          {
+            name: 'New Org',
+            slug: 'new-org',
+          },
+          {
+            id: 'admin-1',
+            platformRole: 'admin',
+          },
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
   describe('createInvitation', () => {
     it('should create invitation and send email for admin actor', async () => {
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);

@@ -7,9 +7,25 @@ import { RolesGuard, PermissionsGuard } from '../common';
 
 describe('RbacController metadata', () => {
   let controller: RbacController;
+  let roleService: {
+    findAll: ReturnType<typeof jest.fn>;
+    findById: ReturnType<typeof jest.fn>;
+    findByName: ReturnType<typeof jest.fn>;
+    create: ReturnType<typeof jest.fn>;
+    update: ReturnType<typeof jest.fn>;
+    delete: ReturnType<typeof jest.fn>;
+    assignPermissions: ReturnType<typeof jest.fn>;
+    getPermissions: ReturnType<typeof jest.fn>;
+    getUserPermissions: ReturnType<typeof jest.fn>;
+    hasPermission: ReturnType<typeof jest.fn>;
+  };
+  let permissionService: {
+    findAll: ReturnType<typeof jest.fn>;
+    findGroupedByResource: ReturnType<typeof jest.fn>;
+  };
 
   beforeEach(() => {
-    const roleService = {
+    roleService = {
       findAll: jest.fn(),
       findById: jest.fn(),
       findByName: jest.fn(),
@@ -20,14 +36,51 @@ describe('RbacController metadata', () => {
       getPermissions: jest.fn(),
       getUserPermissions: jest.fn(),
       hasPermission: jest.fn(),
-    } as unknown as RoleService;
+    };
 
-    const permissionService = {
+    permissionService = {
       findAll: jest.fn(),
       findGroupedByResource: jest.fn(),
-    } as unknown as PermissionService;
+    };
 
-    controller = new RbacController(roleService, permissionService);
+    controller = new RbacController(
+      roleService as unknown as RoleService,
+      permissionService as unknown as PermissionService,
+    );
+  });
+
+  it('returns all permissions for admin in getMyPermissions', async () => {
+    permissionService.findAll.mockResolvedValue([
+      { id: '1', resource: 'organization', action: 'create' },
+      { id: '2', resource: 'user', action: 'read' },
+    ]);
+
+    const result = await controller.getMyPermissions({
+      user: { role: 'admin' },
+    } as any);
+
+    expect(result).toEqual({
+      data: ['organization:create', 'user:read'],
+    });
+    expect(permissionService.findAll).toHaveBeenCalled();
+    expect(roleService.getUserPermissions).not.toHaveBeenCalled();
+  });
+
+  it('returns role-based permissions for non-admin in getMyPermissions', async () => {
+    roleService.getUserPermissions.mockResolvedValue([
+      { id: '3', resource: 'organization', action: 'read' },
+      { id: '4', resource: 'organization', action: 'invite' },
+    ]);
+
+    const result = await controller.getMyPermissions({
+      user: { role: 'manager' },
+    } as any);
+
+    expect(result).toEqual({
+      data: ['organization:read', 'organization:invite'],
+    });
+    expect(roleService.getUserPermissions).toHaveBeenCalledWith('manager');
+    expect(permissionService.findAll).not.toHaveBeenCalled();
   });
 
   it('applies class-level role restrictions', () => {

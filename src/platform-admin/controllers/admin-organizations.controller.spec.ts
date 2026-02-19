@@ -9,6 +9,7 @@ describe('AdminOrganizationsController', () => {
 
   beforeEach(() => {
     orgService = {
+      create: jest.fn(),
       getRoles: jest.fn().mockImplementation(async () => ({ roles: [], assignableRoles: [] })),
       findAll: jest.fn(),
       findById: jest.fn(),
@@ -114,6 +115,39 @@ describe('AdminOrganizationsController', () => {
           id: 'admin-1',
           email: 'admin@example.com',
           name: 'Admin',
+        },
+      );
+    });
+  });
+
+  describe('create', () => {
+    it('forwards create request for manager and does not require active organization', async () => {
+      orgService.create.mockResolvedValue({
+        id: 'org-2',
+        name: 'New Org',
+        slug: 'new-org',
+        logo: null,
+        metadata: null,
+        createdAt: new Date(),
+      } as never);
+
+      const managerSession = {
+        user: { id: 'manager-1', role: 'manager' },
+        session: { activeOrganizationId: null },
+      } as unknown as UserSession;
+
+      await controller.create(managerSession, { name: 'New Org', slug: 'new-org' });
+
+      expect(orgService.create).toHaveBeenCalledWith(
+        {
+          name: 'New Org',
+          slug: 'new-org',
+          logo: undefined,
+          metadata: undefined,
+        },
+        {
+          id: 'manager-1',
+          platformRole: 'manager',
         },
       );
     });

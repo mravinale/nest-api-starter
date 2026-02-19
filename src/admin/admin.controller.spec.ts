@@ -1,6 +1,9 @@
 import { jest } from '@jest/globals';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { AdminUsersController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { ROLES_KEY } from '../common';
+import { RolesGuard, PermissionsGuard } from '../common';
 
 describe('AdminUsersController', () => {
   let controller: AdminUsersController;
@@ -30,6 +33,19 @@ describe('AdminUsersController', () => {
     } as unknown as jest.Mocked<AdminService>;
 
     controller = new AdminUsersController(adminService);
+  });
+
+  it('applies class-level admin/manager role restrictions', () => {
+    const roles = Reflect.getMetadata(ROLES_KEY, AdminUsersController);
+    expect(roles).toEqual(['admin', 'manager']);
+  });
+
+  it('applies class-level RolesGuard and PermissionsGuard', () => {
+    const guards = Reflect.getMetadata(GUARDS_METADATA, AdminUsersController) as unknown[];
+
+    expect(guards).toBeDefined();
+    expect(guards).toContain(RolesGuard);
+    expect(guards).toContain(PermissionsGuard);
   });
 
   it('passes actor user id to updateUser', async () => {
