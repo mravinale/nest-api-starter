@@ -102,11 +102,13 @@ describe('AdminOrganizationsService', () => {
   describe('create', () => {
     it('should create organization and manager membership for manager actor', async () => {
       dbService.queryOne
-        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, created_at: new Date() });
 
       dbService.transaction.mockImplementation(async (callback) => {
-        const mockQuery = (async () => []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
+        const mockQuery = (async (sql: string) =>
+          sql.includes('SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)')
+            ? []
+            : []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
         await callback(mockQuery);
         return undefined;
       });
@@ -128,7 +130,13 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should reject duplicate organization slug', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ id: 'existing-org' });
+      dbService.transaction.mockImplementation(async (callback) => {
+        const mockQuery = (async (sql: string) =>
+          sql.includes('SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)')
+            ? [{ id: 'existing-org' }]
+            : []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
+        return callback(mockQuery);
+      });
 
       await expect(
         service.create(
