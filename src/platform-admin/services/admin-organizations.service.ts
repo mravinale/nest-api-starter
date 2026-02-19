@@ -498,7 +498,6 @@ export class AdminOrganizationsService {
     );
 
     if (result.length === 0) {
-      // Check if it existed
       const existing = await this.db.queryOne<{ id: string }>(
         `SELECT id FROM invitation WHERE id = $1`,
         [invitationId],
@@ -523,7 +522,6 @@ export class AdminOrganizationsService {
     role: string;
     createdAt: Date;
   }> {
-    // Check if user exists
     const user = await this.db.queryOne<{ id: string }>(
       `SELECT id FROM "user" WHERE id = $1`,
       [userId],
@@ -532,7 +530,6 @@ export class AdminOrganizationsService {
       throw new Error('User not found');
     }
 
-    // Check if user is already a member
     const existingMember = await this.db.queryOne<{ id: string }>(
       `SELECT id FROM member WHERE "userId" = $1 AND "organizationId" = $2`,
       [userId, organizationId],
@@ -541,17 +538,14 @@ export class AdminOrganizationsService {
       throw new Error('User is already a member of this organization');
     }
 
-    // Generate a unique ID for the member
     const memberId = this.generateId();
 
-    // Insert the member
     await this.db.query(
       `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
        VALUES ($1, $2, $3, $4, NOW())`,
       [memberId, organizationId, userId, role],
     );
 
-    // Fetch and return the created member
     const member = await this.db.queryOne<{
       id: string;
       organizationId: string;
