@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Resend } from 'resend';
 import { ConfigService } from '../config/config.service';
+import { isResendTestEmail } from '../common/resend-test-email';
 import type {
   EmailPayload,
   EmailVerificationPayload,
@@ -24,6 +25,13 @@ export class EmailService {
 
   async sendEmail({ to, subject, html, text }: EmailPayload): Promise<void> {
     console.log('📧 [EmailService] sendEmail called:', { to, subject, isTestMode: this.configService.isTestMode(), hasResendClient: !!this.resendClient });
+
+    if (this.configService.shouldEnforceResendTestRecipients() && !isResendTestEmail(to)) {
+      console.error('❌ [EmailService] Non-Resend recipient blocked by test guardrail:', { to, subject });
+      throw new Error(
+        'Resend test address required while ENFORCE_RESEND_TEST_RECIPIENTS is enabled. Use delivered@resend.dev or delivered+label@resend.dev.',
+      );
+    }
     
     if (this.configService.isTestMode()) {
       console.log('⚠️ [TEST MODE] Email skipped:', { to, subject });

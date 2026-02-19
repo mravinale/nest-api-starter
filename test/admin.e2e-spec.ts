@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { resendTestEmail, uniqueResendDeliveredEmail } from '../src/common/resend-test-email';
 import { getTestHelpers, TestHelpers, TestContext } from './test-helpers';
 
 describe('Admin User Management (e2e)', () => {
@@ -41,7 +42,7 @@ describe('Admin User Management (e2e)', () => {
         .post('/api/admin/users')
         .send({
           name: 'Test User',
-          email: 'test@example.com',
+          email: resendTestEmail('delivered', 'unauth-create-user'),
           password: 'SecurePass123!',
           role: 'member',
         })
@@ -188,7 +189,7 @@ describe('Admin User Management - Role-Based Access Control', () => {
 
   describe('User Creation - Role Hierarchy', () => {
     it('[Admin] should create admin user without organization', async () => {
-      const email = `newadmin-${Date.now()}@example.com`;
+      const email = uniqueResendDeliveredEmail('newadmin');
       
       return request(app.getHttpServer())
         .post('/api/admin/users')
@@ -206,7 +207,7 @@ describe('Admin User Management - Role-Based Access Control', () => {
     });
 
     it('[Admin] should create manager user with organization', async () => {
-      const email = `newmanager-${Date.now()}@example.com`;
+      const email = uniqueResendDeliveredEmail('newmanager');
       
       return request(app.getHttpServer())
         .post('/api/admin/users')
@@ -225,7 +226,7 @@ describe('Admin User Management - Role-Based Access Control', () => {
     });
 
     it('[Manager] should create member user in their organization', async () => {
-      const email = `newmember-${Date.now()}@example.com`;
+      const email = uniqueResendDeliveredEmail('newmember');
       
       const res = await request(app.getHttpServer())
         .post('/api/admin/users')
@@ -246,7 +247,7 @@ describe('Admin User Management - Role-Based Access Control', () => {
     });
 
     it('[Manager] should reject admin user creation with 403', async () => {
-      const email = `attemptedadmin-${Date.now()}@example.com`;
+      const email = uniqueResendDeliveredEmail('attemptedadmin');
       
       return request(app.getHttpServer())
         .post('/api/admin/users')
@@ -261,7 +262,7 @@ describe('Admin User Management - Role-Based Access Control', () => {
     });
 
     it('should reject manager/member creation without organization', async () => {
-      const email = `noorg-${Date.now()}@example.com`;
+      const email = uniqueResendDeliveredEmail('noorg');
       
       return request(app.getHttpServer())
         .post('/api/admin/users')
@@ -295,7 +296,7 @@ describe('Admin User Management - Role-Based Access Control', () => {
       // Create a fresh user for role change testing
       const signUp = await helpers.signUpAndGetCookie({
         name: 'Role Change Target',
-        email: `rolechange-${Date.now()}@test.com`,
+        email: uniqueResendDeliveredEmail('rolechange'),
         password: 'SecurePass123!',
       });
       await helpers.setUserRole(signUp.userId, 'member');

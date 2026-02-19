@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { closeAuthDatabasePool } from '../src/auth';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env.test') });
 
@@ -32,6 +33,7 @@ export default async function globalTeardown() {
   } catch (error) {
     console.error('❌ Error cleaning up test database:', error);
   } finally {
+    await closeAuthDatabasePool();
     await pool.end();
   }
 }

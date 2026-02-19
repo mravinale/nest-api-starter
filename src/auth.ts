@@ -7,6 +7,10 @@ import type { EmailService } from "./email/email.service";
 import { ac, roles } from "./permissions";
 
 const isTestMode = process.env.NODE_ENV === "test";
+const authDatabasePool = new Pool({
+    connectionString: process.env.DATABASE_URL || "postgresql://mravinale@localhost:5432/nestjs-api-starter",
+});
+let isAuthDatabasePoolClosed = false;
 
 // Email service instance - will be set by the module
 let emailServiceInstance: EmailService | null = null;
@@ -15,10 +19,17 @@ export function setEmailService(service: EmailService): void {
     emailServiceInstance = service;
 }
 
+export async function closeAuthDatabasePool(): Promise<void> {
+    if (isAuthDatabasePoolClosed) {
+        return;
+    }
+
+    await authDatabasePool.end();
+    isAuthDatabasePoolClosed = true;
+}
+
 export const auth = betterAuth({
-    database: new Pool({
-        connectionString: process.env.DATABASE_URL || "postgresql://mravinale@localhost:5432/nestjs-api-starter",
-    }),
+    database: authDatabasePool,
     secret: process.env.AUTH_SECRET,
     baseURL: process.env.BASE_URL || "http://localhost:3000",
     basePath: "/api/auth",
