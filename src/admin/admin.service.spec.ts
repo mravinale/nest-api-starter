@@ -684,6 +684,187 @@ describe('AdminService', () => {
     });
   });
 
+  describe('getTargetRole — branch coverage', () => {
+    it('returns null when user row not found — covers !row branch (line 37)', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getUserCapabilities({
+          actorUserId: 'admin-1',
+          targetUserId: 'missing-user',
+          platformRole: 'admin',
+          activeOrganizationId: null,
+        }),
+      ).rejects.toThrow('Target user not found');
+    });
+
+    it('returns member fallback for unknown role string — covers return member branch (line 44)', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ role: 'custom-unknown-role' })
+        .mockResolvedValueOnce({ id: 'member-row' });
+
+      const result = await service.getUserCapabilities({
+        actorUserId: 'manager-1',
+        targetUserId: 'user-x',
+        platformRole: 'manager',
+        activeOrganizationId: 'org-1',
+      });
+
+      expect(result.targetRole).toBe('member');
+    });
+  });
+
+  describe('assertTargetActionAllowed — branch coverage', () => {
+    it('returns early when actorUserId is undefined — covers !actorUserId branch (line 58)', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ ...mockUser, name: 'Updated' });
+
+      const result = await service.updateUser(
+        { userId: 'user-1', name: 'Updated' },
+        'admin',
+        null,
+        undefined,
+      );
+
+      expect(result.name).toBe('Updated');
+    });
+
+    it('throws when target user not found — covers !targetRole branch (line 70)', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.banUser({ userId: 'ghost-user' }, 'admin', null, 'actor-1'),
+      ).rejects.toThrow('Target user not found');
+    });
+  });
+
+  describe('updateUser — branch coverage', () => {
+    it('throws when manager has no active organization — covers line 171', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+
+      await expect(
+        service.updateUser({ userId: 'user-1', name: 'X' }, 'manager', null, 'actor-mgr'),
+      ).rejects.toThrow('Active organization required');
+    });
+
+    it('throws when no fields to update — covers updates.length === 0 branch (line 185)', async () => {
+      await expect(
+        service.updateUser({ userId: 'user-1' }, 'admin', null, undefined),
+      ).rejects.toThrow('No data to update');
+    });
+  });
+
+  describe('banUser — branch coverage', () => {
+    it('throws when manager has no active organization — covers line 283', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+
+      await expect(
+        service.banUser({ userId: 'user-1' }, 'manager', null, 'actor-mgr'),
+      ).rejects.toThrow('Active organization required');
+    });
+  });
+
+  describe('unbanUser — branch coverage', () => {
+    it('throws when manager has no active organization — covers line 308', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+
+      await expect(
+        service.unbanUser({ userId: 'user-1' }, 'manager', null, 'actor-mgr'),
+      ).rejects.toThrow('Active organization required');
+    });
+  });
+
+  describe('setUserPassword — branch coverage', () => {
+    it('throws when manager has no active organization — covers line 333', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+
+      await expect(
+        service.setUserPassword({ userId: 'user-1', newPassword: 'Pass123!' }, 'manager', null, 'actor-mgr'),
+      ).rejects.toThrow('Active organization required');
+    });
+  });
+
+  describe('removeUser — branch coverage', () => {
+    it('throws when manager has no active organization — covers line 359', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+
+      await expect(
+        service.removeUser({ userId: 'user-1' }, 'manager', null, 'actor-mgr'),
+      ).rejects.toThrow('Active organization required');
+    });
+  });
+
+  describe('listUsers — branch coverage', () => {
+    it('returns total 0 when totalRow is null — covers totalRow null branch (line 475)', async () => {
+      dbService.query.mockResolvedValueOnce([]);
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      const result = await service.listUsers({
+        limit: 10, offset: 0, platformRole: 'admin', activeOrganizationId: null,
+      });
+
+      expect(result.total).toBe(0);
+    });
+  });
+
+  describe('setUserRole — insert new member branch coverage', () => {
+    it('inserts new member row when member does not exist — covers INSERT branch (line 254)', async () => {
+      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
+        if (sql.includes('SELECT id FROM member WHERE "organizationId"')) return [];
+        return [];
+      });
+
+      dbService.queryOne
+        .mockResolvedValueOnce({ role: 'member' })
+        .mockResolvedValueOnce({ organizationId: 'org-1' })
+        .mockResolvedValueOnce({ ...mockUser, id: 'target-1', role: 'manager' });
+
+      dbService.transaction.mockImplementation(async <T>(
+        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
+      ): Promise<T> => callback(queryMock));
+
+      await service.setUserRole(
+        { userId: 'target-1', role: 'manager' },
+        'admin',
+        null,
+        'actor-admin',
+      );
+
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO member'),
+        expect.any(Array),
+      );
+    });
+  });
+
+  describe('getUserCapabilities — branch coverage', () => {
+    it('throws when target user not found — covers !targetRole branch (line 491)', async () => {
+      dbService.queryOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getUserCapabilities({
+          actorUserId: 'admin-1',
+          targetUserId: 'ghost',
+          platformRole: 'admin',
+          activeOrganizationId: null,
+        }),
+      ).rejects.toThrow('Target user not found');
+    });
+
+    it('sets isTargetInActiveOrganization=false when manager has no activeOrgId — covers line 500', async () => {
+      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+
+      const result = await service.getUserCapabilities({
+        actorUserId: 'manager-1',
+        targetUserId: 'user-1',
+        platformRole: 'manager',
+        activeOrganizationId: null,
+      });
+
+      expect(result.actions.update).toBe(false);
+      expect(result.actions.ban).toBe(false);
+    });
+  });
+
   describe('getUserCapabilities', () => {
     it('returns self-safe capabilities for admin acting on self', async () => {
       dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
