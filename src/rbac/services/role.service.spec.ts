@@ -231,5 +231,212 @@ describe('RoleService', () => {
 
       expect(mockDbService.transaction).toHaveBeenCalled();
     });
+
+    it('should assign empty permissions array — covers empty loop branch', async () => {
+      mockDbService.transaction.mockImplementation(async (callback: (query: unknown) => Promise<unknown>) => {
+        const mockQuery = jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]);
+        return callback(mockQuery);
+      });
+
+      await service.assignPermissions('2', []);
+
+      expect(mockDbService.transaction).toHaveBeenCalled();
+    });
+  });
+
+  describe('findById', () => {
+    it('returns role when found — covers truthy branch', async () => {
+      const mockRole = {
+        id: '1', name: 'admin', display_name: 'Admin',
+        description: 'Full access', color: 'red',
+        is_system: true, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne.mockResolvedValue(mockRole);
+
+      const result = await service.findById('1');
+
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('1');
+    });
+
+    it('returns null when not found — covers null branch', async () => {
+      mockDbService.queryOne.mockResolvedValue(null);
+
+      const result = await service.findById('missing');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('create — branch coverage', () => {
+    it('throws when db returns null — covers !row branch', async () => {
+      mockDbService.queryOne.mockResolvedValue(null);
+
+      await expect(service.create({ name: 'x', displayName: 'X' })).rejects.toThrow(
+        'Failed to create role',
+      );
+    });
+
+    it('uses null for description when not provided — covers description ?? null branch', async () => {
+      const mockRole = {
+        id: '3', name: 'viewer', display_name: 'Viewer',
+        description: null, color: 'gray',
+        is_system: false, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne.mockResolvedValue(mockRole);
+
+      await service.create({ name: 'viewer', displayName: 'Viewer' });
+
+      expect(mockDbService.queryOne).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([null]),
+      );
+    });
+
+    it('uses gray default for color when not provided — covers color ?? gray branch', async () => {
+      const mockRole = {
+        id: '3', name: 'viewer', display_name: 'Viewer',
+        description: null, color: 'gray',
+        is_system: false, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne.mockResolvedValue(mockRole);
+
+      await service.create({ name: 'viewer', displayName: 'Viewer' });
+
+      expect(mockDbService.queryOne).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining(['gray']),
+      );
+    });
+  });
+
+  describe('update — branch coverage', () => {
+    it('returns null when role not found — covers !existing branch', async () => {
+      mockDbService.queryOne.mockResolvedValue(null);
+
+      const result = await service.update('missing', { displayName: 'X' });
+
+      expect(result).toBeNull();
+    });
+
+    it('returns existing role when dto is empty — covers updates.length === 0 branch', async () => {
+      const mockRole = {
+        id: '2', name: 'editor', display_name: 'Editor',
+        description: null, color: 'blue',
+        is_system: false, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne.mockResolvedValue(mockRole);
+
+      const result = await service.update('2', {});
+
+      expect(result?.name).toBe('editor');
+      expect(mockDbService.queryOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('updates description field — covers dto.description branch', async () => {
+      const mockRole = {
+        id: '2', name: 'editor', display_name: 'Editor',
+        description: 'Updated desc', color: 'blue',
+        is_system: false, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne
+        .mockResolvedValueOnce(mockRole)
+        .mockResolvedValueOnce(mockRole);
+
+      const result = await service.update('2', { description: 'Updated desc' });
+
+      expect(result?.name).toBe('editor');
+    });
+
+    it('updates color field — covers dto.color branch', async () => {
+      const mockRole = {
+        id: '2', name: 'editor', display_name: 'Editor',
+        description: null, color: 'green',
+        is_system: false, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne
+        .mockResolvedValueOnce(mockRole)
+        .mockResolvedValueOnce(mockRole);
+
+      const result = await service.update('2', { color: 'green' });
+
+      expect(result?.name).toBe('editor');
+    });
+
+    it('returns null when update query returns null — covers row ? branch', async () => {
+      const mockRole = {
+        id: '2', name: 'editor', display_name: 'Editor',
+        description: null, color: 'blue',
+        is_system: false, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne
+        .mockResolvedValueOnce(mockRole)
+        .mockResolvedValueOnce(null);
+
+      const result = await service.update('2', { displayName: 'New Name' });
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('delete — branch coverage', () => {
+    it('throws when role not found — covers !existing branch', async () => {
+      mockDbService.queryOne.mockResolvedValue(null);
+
+      await expect(service.delete('missing')).rejects.toThrow('Role not found');
+    });
+  });
+
+  describe('getUserPermissions', () => {
+    it('returns empty array when role not found — covers !role branch', async () => {
+      mockDbService.queryOne.mockResolvedValue(null);
+
+      const result = await service.getUserPermissions('nonexistent');
+
+      expect(result).toEqual([]);
+    });
+
+    it('returns permissions when role exists — covers role found branch', async () => {
+      const mockRole = {
+        id: '1', name: 'admin', display_name: 'Admin',
+        description: null, color: 'red',
+        is_system: true, created_at: new Date(), updated_at: new Date(),
+      };
+      mockDbService.queryOne.mockResolvedValue(mockRole);
+      mockDbService.query.mockResolvedValue([
+        { id: 'p1', resource: 'user', action: 'read', description: null },
+      ]);
+
+      const result = await service.getUserPermissions('admin');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].resource).toBe('user');
+    });
+  });
+
+  describe('hasPermission', () => {
+    it('returns true when count > 0 — covers truthy count branch', async () => {
+      mockDbService.queryOne.mockResolvedValue({ count: '1' });
+
+      const result = await service.hasPermission('admin', 'user', 'read');
+
+      expect(result).toBe(true);
+    });
+
+    it('returns false when count is 0 — covers count === 0 branch', async () => {
+      mockDbService.queryOne.mockResolvedValue({ count: '0' });
+
+      const result = await service.hasPermission('member', 'user', 'delete');
+
+      expect(result).toBe(false);
+    });
+
+    it('returns false when row is null — covers !row branch', async () => {
+      mockDbService.queryOne.mockResolvedValue(null);
+
+      const result = await service.hasPermission('unknown', 'user', 'read');
+
+      expect(result).toBe(false);
+    });
   });
 });

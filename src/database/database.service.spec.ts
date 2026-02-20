@@ -119,6 +119,44 @@ describe('DatabaseService - Migration Tracking', () => {
     });
   });
 
+  describe('transaction', () => {
+    it('should commit on successful callback', async () => {
+      const mockClient = {
+        query: jest.fn<() => Promise<{ rows: unknown[] }>>().mockResolvedValue({ rows: [] }),
+        release: jest.fn(),
+      };
+      mockPool.connect.mockResolvedValue(mockClient);
+
+      const result = await service.transaction(async (query) => {
+        await query('INSERT INTO "user" (id) VALUES ($1)', ['user-1']);
+        return 'done';
+      });
+
+      expect(result).toBe('done');
+      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
+      expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it('should rollback on error and rethrow', async () => {
+      const mockClient = {
+        query: jest.fn<() => Promise<{ rows: unknown[] }>>().mockResolvedValue({ rows: [] }),
+        release: jest.fn(),
+      };
+      mockPool.connect.mockResolvedValue(mockClient);
+
+      await expect(
+        service.transaction(async () => {
+          throw new Error('Something went wrong');
+        }),
+      ).rejects.toThrow('Something went wrong');
+
+      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
+      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+  });
+
   describe('query and queryOne', () => {
     it('query should return rows', async () => {
       mockPool.query.mockResolvedValueOnce({

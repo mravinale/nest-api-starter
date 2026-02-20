@@ -1,4 +1,12 @@
 import { jest } from '@jest/globals';
+
+jest.mock('@thallesp/nestjs-better-auth', () => ({
+  Session: () => () => {},
+  AllowAnonymous: () => () => {},
+  BetterAuthGuard: class {},
+  BetterAuthModule: { forRoot: jest.fn(() => ({ module: class {} })) },
+}));
+
 import { HttpStatus } from '@nestjs/common';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
 import { AdminOrganizationsController } from './admin-organizations.controller';
