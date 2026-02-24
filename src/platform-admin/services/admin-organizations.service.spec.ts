@@ -100,15 +100,16 @@ describe('AdminOrganizationsService', () => {
   });
 
   describe('create', () => {
-    it('should create organization and manager membership for manager actor', async () => {
+    it('should create organization and admin membership for manager actor', async () => {
       dbService.queryOne
         .mockResolvedValueOnce({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, created_at: new Date() });
 
+      const mockQuery = jest.fn(async (sql: string, _params?: unknown[]) =>
+        sql.includes('SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)')
+          ? []
+          : []);
+
       dbService.transaction.mockImplementation(async (callback) => {
-        const mockQuery = (async (sql: string) =>
-          sql.includes('SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)')
-            ? []
-            : []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
         await callback(mockQuery);
         return undefined;
       });
@@ -127,6 +128,46 @@ describe('AdminOrganizationsService', () => {
       expect(created.name).toBe('New Org');
       expect(created.slug).toBe('new-org');
       expect(dbService.transaction).toHaveBeenCalledTimes(1);
+
+      const memberInsertCall = mockQuery.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('INSERT INTO member'),
+      );
+      expect(memberInsertCall).toBeDefined();
+      expect(memberInsertCall?.[1]).toEqual(expect.arrayContaining(['manager-1', 'admin']));
+    });
+
+    it('should create organization and admin membership for admin actor', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'org-3', name: 'Admin Org', slug: 'admin-org', logo: null, metadata: null, created_at: new Date() });
+
+      const mockQuery = jest.fn(async (sql: string, _params?: unknown[]) =>
+        sql.includes('SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)')
+          ? []
+          : []);
+
+      dbService.transaction.mockImplementation(async (callback) => {
+        await callback(mockQuery);
+        return undefined;
+      });
+
+      const created = await service.create(
+        {
+          name: 'Admin Org',
+          slug: 'admin-org',
+        },
+        {
+          id: 'admin-1',
+          platformRole: 'admin',
+        },
+      );
+
+      expect(created.name).toBe('Admin Org');
+
+      const memberInsertCall = mockQuery.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('INSERT INTO member'),
+      );
+      expect(memberInsertCall).toBeDefined();
+      expect(memberInsertCall?.[1]).toEqual(expect.arrayContaining(['admin-1', 'admin']));
     });
 
     it('should reject duplicate organization slug', async () => {

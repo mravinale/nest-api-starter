@@ -135,7 +135,7 @@ export class AdminOrganizationsService {
 
     const organizationId = this.generateId();
     const memberId = this.generateId();
-    const creatorMemberRole = actor.platformRole === 'admin' ? 'admin' : 'manager';
+    const creatorMemberRole = 'admin';
     const metadataJson = input.metadata === undefined ? null : JSON.stringify(input.metadata);
 
     await this.db.transaction(async (query) => {
