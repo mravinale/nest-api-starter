@@ -13,7 +13,7 @@ import { ImpersonateUserDto } from '../dto';
 
 /**
  * Controller for org-scoped impersonation.
- * Allows org managers (owner/admin/manager) to impersonate members within their organization.
+ * Allows org managers (admin/manager) to impersonate members within their organization.
  */
 @Controller('api/organization')
 export class OrgImpersonationController {
@@ -21,7 +21,7 @@ export class OrgImpersonationController {
 
   /**
    * Impersonate a user within an organization.
-   * Only org managers (owner/admin/manager) can impersonate.
+   * Only org managers (admin/manager) can impersonate.
    * Target user must be a member of the same organization.
    */
   @Post(':organizationId/impersonate')

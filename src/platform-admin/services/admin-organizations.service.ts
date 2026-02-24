@@ -34,7 +34,6 @@ export const ROLE_HIERARCHY: Record<string, number> = {
   member: 0,
   manager: 1,
   admin: 2,
-  owner: 3,
 };
 
 /**
@@ -51,7 +50,10 @@ export function getRoleLevel(role: string): number {
  */
 export function filterAssignableRoles(allRoleNames: string[], requesterRole: string): string[] {
   const requesterLevel = getRoleLevel(requesterRole);
-  return allRoleNames.filter((r) => getRoleLevel(r) <= requesterLevel);
+  return allRoleNames.filter((r) => {
+    const roleLevel = ROLE_HIERARCHY[r];
+    return roleLevel !== undefined && roleLevel <= requesterLevel;
+  });
 }
 
 /**
