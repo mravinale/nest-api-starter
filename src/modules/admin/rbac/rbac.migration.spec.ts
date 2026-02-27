@@ -86,4 +86,160 @@ describe('RbacMigrationService', () => {
       );
     });
   });
+
+  describe('createRbacTables', () => {
+    it('should execute CREATE TABLE queries for roles, permissions, and role_permissions', async () => {
+      await service.createRbacTables();
+
+      expect(dbService.query).toHaveBeenCalledTimes(3);
+      expect(dbService.query).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS roles'));
+      expect(dbService.query).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS permissions'));
+      expect(dbService.query).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS role_permissions'));
+    });
+  });
+
+  describe('migrateOldRoleNames', () => {
+    it('should execute UPDATE queries for role renames and user table updates', async () => {
+      await service.migrateOldRoleNames();
+
+      expect(dbService.query).toHaveBeenCalledTimes(4);
+      expect(dbService.query).toHaveBeenCalledWith(expect.stringContaining("name = 'moderator'"));
+      expect(dbService.query).toHaveBeenCalledWith(expect.stringContaining("name = 'user'"));
+      expect(dbService.query).toHaveBeenCalledWith(expect.stringContaining("role = 'moderator'"));
+      expect(dbService.query).toHaveBeenCalledWith(expect.stringContaining("role = 'user'"));
+    });
+  });
+
+  describe('seedDefaultData', () => {
+    it('should seed permissions, roles, and assign permissions when all roles found', async () => {
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      // queryOne returns: admin role, then manager role, then member role
+      // Also returns permission lookups for manager and member assignments
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'admin-id' })   // admin role lookup
+        .mockResolvedValueOnce({ id: 'manager-id' })  // manager role lookup
+        .mockResolvedValueOnce({ id: 'perm-1' })      // manager perm lookup 1
+        .mockResolvedValueOnce({ id: 'perm-2' })      // manager perm lookup 2
+        .mockResolvedValueOnce({ id: 'perm-3' })      // manager perm lookup 3
+        .mockResolvedValueOnce({ id: 'perm-4' })      // manager perm lookup 4
+        .mockResolvedValueOnce({ id: 'perm-5' })      // manager perm lookup 5
+        .mockResolvedValueOnce({ id: 'perm-6' })      // manager perm lookup 6
+        .mockResolvedValueOnce({ id: 'perm-7' })      // manager perm lookup 7
+        .mockResolvedValueOnce({ id: 'perm-8' })      // manager perm lookup 8
+        .mockResolvedValueOnce({ id: 'perm-9' })      // manager perm lookup 9
+        .mockResolvedValueOnce({ id: 'perm-10' })     // manager perm lookup 10
+        .mockResolvedValueOnce({ id: 'member-id' })   // member role lookup
+        .mockResolvedValueOnce({ id: 'perm-11' })     // member perm lookup 1
+        .mockResolvedValueOnce({ id: 'perm-12' })     // member perm lookup 2
+        .mockResolvedValueOnce({ id: 'perm-13' });    // member perm lookup 3
+
+      // query returns all permissions for admin assignment
+      dbService.query.mockResolvedValue([
+        { id: 'all-perm-1' },
+        { id: 'all-perm-2' },
+      ]);
+
+      await service.seedDefaultData();
+
+      // Should have inserted permissions (21) + roles (3) + admin perms (2) + manager perms (10) + member perms (3)
+      expect(dbService.query).toHaveBeenCalled();
+      expect(dbService.queryOne).toHaveBeenCalled();
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('RBAC default data seeded'));
+      consoleSpy.mockRestore();
+    });
+
+    it('should skip admin permission assignment when admin role not found', async () => {
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      dbService.queryOne
+        .mockResolvedValueOnce(null)              // admin role not found
+        .mockResolvedValueOnce(null)              // manager role not found
+        .mockResolvedValueOnce(null);             // member role not found
+
+      await service.seedDefaultData();
+
+      // Should still seed permissions and roles, just skip assignments
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('RBAC default data seeded'));
+      consoleSpy.mockRestore();
+    });
+
+    it('should skip manager permission insert when permission lookup returns null', async () => {
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      dbService.queryOne
+        .mockResolvedValueOnce(null)              // admin not found
+        .mockResolvedValueOnce({ id: 'mgr-id' }) // manager found
+        .mockResolvedValueOnce(null)              // first manager perm not found
+        .mockResolvedValueOnce(null)              // second manager perm not found
+        .mockResolvedValueOnce(null)              // etc.
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'mem-id' }) // member found
+        .mockResolvedValueOnce(null)              // member perms not found
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      await service.seedDefaultData();
+
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('RBAC default data seeded'));
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('addManagerOrganizationCreatePermission', () => {
+    it('should assign org:create permission to manager when both exist', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'manager-id' })     // manager role
+        .mockResolvedValueOnce({ id: 'org-create-id' }); // org:create permission
+
+      await service.addManagerOrganizationCreatePermission();
+
+      // INSERT permission + INSERT role_permissions
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO permissions'),
+        ['organization', 'create', 'Create organizations'],
+      );
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO role_permissions'),
+        ['manager-id', 'org-create-id'],
+      );
+    });
+
+    it('should skip role_permissions insert when manager role not found', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce(null)                      // manager role not found
+        .mockResolvedValueOnce({ id: 'org-create-id' }); // org:create permission found
+
+      await service.addManagerOrganizationCreatePermission();
+
+      // Should only insert permission, not role_permissions
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO permissions'),
+        ['organization', 'create', 'Create organizations'],
+      );
+      expect(dbService.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO role_permissions'),
+        expect.anything(),
+      );
+    });
+
+    it('should skip role_permissions insert when permission not found', async () => {
+      dbService.queryOne
+        .mockResolvedValueOnce({ id: 'manager-id' }) // manager role found
+        .mockResolvedValueOnce(null);                 // org:create permission not found
+
+      await service.addManagerOrganizationCreatePermission();
+
+      expect(dbService.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO role_permissions'),
+        expect.anything(),
+      );
+    });
+  });
 });

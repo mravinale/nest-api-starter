@@ -139,3 +139,270 @@ describe('RbacController metadata', () => {
     });
   });
 });
+
+describe('RbacController handler bodies', () => {
+  let controller: RbacController;
+  let roleService: {
+    findAll: ReturnType<typeof jest.fn>;
+    findById: ReturnType<typeof jest.fn>;
+    findByName: ReturnType<typeof jest.fn>;
+    create: ReturnType<typeof jest.fn>;
+    update: ReturnType<typeof jest.fn>;
+    delete: ReturnType<typeof jest.fn>;
+    assignPermissions: ReturnType<typeof jest.fn>;
+    getPermissions: ReturnType<typeof jest.fn>;
+    getUserPermissions: ReturnType<typeof jest.fn>;
+    hasPermission: ReturnType<typeof jest.fn>;
+  };
+  let permissionService: {
+    findAll: ReturnType<typeof jest.fn>;
+    findGroupedByResource: ReturnType<typeof jest.fn>;
+  };
+
+  beforeEach(() => {
+    roleService = {
+      findAll: jest.fn(),
+      findById: jest.fn(),
+      findByName: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      assignPermissions: jest.fn(),
+      getPermissions: jest.fn(),
+      getUserPermissions: jest.fn(),
+      hasPermission: jest.fn(),
+    };
+
+    permissionService = {
+      findAll: jest.fn(),
+      findGroupedByResource: jest.fn(),
+    };
+
+    controller = new RbacController(
+      roleService as unknown as RoleService,
+      permissionService as unknown as PermissionService,
+    );
+  });
+
+  afterEach(() => jest.clearAllMocks());
+
+  // ============ getRoles ============
+
+  describe('getRoles', () => {
+    it('returns all roles wrapped in data', async () => {
+      const roles = [{ id: '1', name: 'admin' }, { id: '2', name: 'member' }];
+      roleService.findAll.mockResolvedValue(roles);
+
+      const result = await controller.getRoles();
+
+      expect(result).toEqual({ data: roles });
+      expect(roleService.findAll).toHaveBeenCalled();
+    });
+  });
+
+  // ============ getRole ============
+
+  describe('getRole', () => {
+    it('returns role with permissions when found', async () => {
+      const role = { id: '1', name: 'admin' };
+      const permissions = [{ id: 'p1', resource: 'user', action: 'read' }];
+      roleService.findById.mockResolvedValue(role);
+      roleService.getPermissions.mockResolvedValue(permissions);
+
+      const result = await controller.getRole('1');
+
+      expect(result).toEqual({ data: { ...role, permissions } });
+      expect(roleService.findById).toHaveBeenCalledWith('1');
+      expect(roleService.getPermissions).toHaveBeenCalledWith('1');
+    });
+
+    it('throws 404 when role not found', async () => {
+      roleService.findById.mockResolvedValue(null);
+
+      await expect(controller.getRole('missing')).rejects.toThrow('Role not found');
+    });
+  });
+
+  // ============ createRole ============
+
+  describe('createRole', () => {
+    it('creates role and returns it', async () => {
+      const dto = { name: 'editor', displayName: 'Editor', description: 'Edit', color: 'blue' };
+      const created = { id: '3', ...dto, isSystem: false };
+      roleService.findByName.mockResolvedValue(null);
+      roleService.create.mockResolvedValue(created);
+
+      const result = await controller.createRole(dto);
+
+      expect(result).toEqual({ data: created });
+      expect(roleService.create).toHaveBeenCalledWith(dto);
+    });
+
+    it('throws 409 when role name already exists', async () => {
+      const dto = { name: 'admin', displayName: 'Admin' };
+      roleService.findByName.mockResolvedValue({ id: '1', name: 'admin' });
+
+      await expect(controller.createRole(dto)).rejects.toThrow('Role name already exists');
+    });
+
+    it('throws 400 when name is empty', async () => {
+      await expect(controller.createRole({ name: '', displayName: 'X' } as any)).rejects.toThrow('Role name is required');
+    });
+
+    it('throws 400 when displayName is empty', async () => {
+      await expect(controller.createRole({ name: 'x', displayName: '' } as any)).rejects.toThrow('Role displayName is required');
+    });
+  });
+
+  // ============ updateRole ============
+
+  describe('updateRole', () => {
+    it('updates role and returns it', async () => {
+      const dto = { displayName: 'Updated' };
+      const updated = { id: '2', name: 'editor', displayName: 'Updated' };
+      roleService.update.mockResolvedValue(updated);
+
+      const result = await controller.updateRole('2', dto);
+
+      expect(result).toEqual({ data: updated });
+    });
+
+    it('throws 404 when role not found', async () => {
+      roleService.update.mockResolvedValue(null);
+
+      await expect(controller.updateRole('missing', { displayName: 'X' })).rejects.toThrow('Role not found');
+    });
+
+    it('throws 400 when no fields provided', async () => {
+      await expect(controller.updateRole('2', {} as any)).rejects.toThrow('At least one field is required');
+    });
+  });
+
+  // ============ deleteRole ============
+
+  describe('deleteRole', () => {
+    it('deletes role and returns success', async () => {
+      roleService.delete.mockResolvedValue(undefined);
+
+      const result = await controller.deleteRole('2');
+
+      expect(result).toEqual({ success: true });
+    });
+
+    it('throws 403 when deleting system role', async () => {
+      roleService.delete.mockRejectedValue(new Error('Cannot delete system role'));
+
+      await expect(controller.deleteRole('1')).rejects.toThrow('Cannot delete system role');
+    });
+
+    it('throws 404 when role not found', async () => {
+      roleService.delete.mockRejectedValue(new Error('Role not found'));
+
+      await expect(controller.deleteRole('missing')).rejects.toThrow('Role not found');
+    });
+
+    it('re-throws unknown errors', async () => {
+      roleService.delete.mockRejectedValue(new Error('DB connection lost'));
+
+      await expect(controller.deleteRole('2')).rejects.toThrow('DB connection lost');
+    });
+
+    it('re-throws non-Error objects', async () => {
+      roleService.delete.mockRejectedValue('string error');
+
+      await expect(controller.deleteRole('2')).rejects.toBe('string error');
+    });
+  });
+
+  // ============ assignPermissions ============
+
+  describe('assignPermissions', () => {
+    it('assigns permissions and returns role with permissions', async () => {
+      const role = { id: '2', name: 'editor' };
+      const permissions = [{ id: 'p1', resource: 'user', action: 'read' }];
+      roleService.findById.mockResolvedValue(role);
+      roleService.assignPermissions.mockResolvedValue(undefined);
+      roleService.getPermissions.mockResolvedValue(permissions);
+
+      const result = await controller.assignPermissions('2', { permissionIds: ['p1'] });
+
+      expect(result).toEqual({ data: { ...role, permissions } });
+      expect(roleService.assignPermissions).toHaveBeenCalledWith('2', ['p1']);
+    });
+
+    it('throws 404 when role not found', async () => {
+      roleService.findById.mockResolvedValue(null);
+
+      await expect(
+        controller.assignPermissions('missing', { permissionIds: ['p1'] }),
+      ).rejects.toThrow('Role not found');
+    });
+
+    it('throws 400 when permissionIds is not an array', async () => {
+      await expect(
+        controller.assignPermissions('2', { permissionIds: 'not-array' } as any),
+      ).rejects.toThrow('permissionIds must be an array');
+    });
+  });
+
+  // ============ getPermissions ============
+
+  describe('getPermissions', () => {
+    it('returns all permissions', async () => {
+      const permissions = [{ id: 'p1', resource: 'user', action: 'read' }];
+      permissionService.findAll.mockResolvedValue(permissions);
+
+      const result = await controller.getPermissions();
+
+      expect(result).toEqual({ data: permissions });
+    });
+  });
+
+  // ============ getPermissionsGrouped ============
+
+  describe('getPermissionsGrouped', () => {
+    it('returns permissions grouped by resource', async () => {
+      const grouped = { user: [{ id: 'p1', resource: 'user', action: 'read' }] };
+      permissionService.findGroupedByResource.mockResolvedValue(grouped);
+
+      const result = await controller.getPermissionsGrouped();
+
+      expect(result).toEqual({ data: grouped });
+    });
+  });
+
+  // ============ getUserPermissions ============
+
+  describe('getUserPermissions', () => {
+    it('returns permissions for a role name', async () => {
+      const permissions = [{ id: 'p1', resource: 'user', action: 'read' }];
+      roleService.getUserPermissions.mockResolvedValue(permissions);
+
+      const result = await controller.getUserPermissions('manager');
+
+      expect(result).toEqual({ data: permissions });
+      expect(roleService.getUserPermissions).toHaveBeenCalledWith('manager');
+    });
+  });
+
+  // ============ checkPermission ============
+
+  describe('checkPermission', () => {
+    it('returns true when role has permission', async () => {
+      roleService.hasPermission.mockResolvedValue(true);
+
+      const result = await controller.checkPermission('admin', 'user', 'read');
+
+      expect(result).toEqual({ data: { hasPermission: true } });
+      expect(roleService.hasPermission).toHaveBeenCalledWith('admin', 'user', 'read');
+    });
+
+    it('returns false when role lacks permission', async () => {
+      roleService.hasPermission.mockResolvedValue(false);
+
+      const result = await controller.checkPermission('member', 'user', 'delete');
+
+      expect(result).toEqual({ data: { hasPermission: false } });
+    });
+  });
+});

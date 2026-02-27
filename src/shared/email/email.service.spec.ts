@@ -161,6 +161,97 @@ describe('EmailService', () => {
     });
   });
 
+  describe('production send (with Resend client)', () => {
+    it('initializes Resend client when API key is present', () => {
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const configService = createConfigServiceMock({
+        getResendApiKey: jest.fn(() => 'real-api-key'),
+      });
+
+      new EmailService(configService);
+
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Resend client initialized'));
+      consoleSpy.mockRestore();
+    });
+
+    it('sends email successfully via Resend', async () => {
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const configService = createConfigServiceMock({
+        getResendApiKey: jest.fn(() => 'real-api-key'),
+        isTestMode: jest.fn(() => false),
+      });
+      const service = new EmailService(configService);
+
+      // Mock the internal resendClient.emails.send
+      const mockSend = jest.fn<() => Promise<{ data: { id: string }; error: null }>>()
+        .mockResolvedValue({ data: { id: 'email-123' }, error: null });
+      (service as any).resendClient = { emails: { send: mockSend } };
+
+      await service.sendEmail({ to: 'user@example.com', subject: 'Test', html: '<p>Hi</p>' });
+
+      expect(mockSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: 'noreply@tierone.cc',
+          to: 'user@example.com',
+          subject: 'Test',
+        }),
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[EmailService] Email sent successfully'),
+        expect.anything(),
+      );
+      consoleSpy.mockRestore();
+    });
+
+    it('throws when Resend API returns error object', async () => {
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      jest.spyOn(console, 'log').mockImplementation(() => {});
+      const configService = createConfigServiceMock({
+        getResendApiKey: jest.fn(() => 'real-api-key'),
+        isTestMode: jest.fn(() => false),
+      });
+      const service = new EmailService(configService);
+
+      const mockSend = jest.fn<() => Promise<{ data: null; error: { message: string } }>>()
+        .mockResolvedValue({ data: null, error: { message: 'rate limited' } });
+      (service as any).resendClient = { emails: { send: mockSend } };
+
+      await expect(
+        service.sendEmail({ to: 'user@example.com', subject: 'Err', html: '<p>Hi</p>' }),
+      ).rejects.toThrow('Failed to send email');
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Error sending email'),
+        expect.objectContaining({ message: 'rate limited' }),
+      );
+      consoleSpy.mockRestore();
+    });
+
+    it('re-throws when Resend client throws an exception', async () => {
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      jest.spyOn(console, 'log').mockImplementation(() => {});
+      const configService = createConfigServiceMock({
+        getResendApiKey: jest.fn(() => 'real-api-key'),
+        isTestMode: jest.fn(() => false),
+      });
+      const service = new EmailService(configService);
+
+      const mockSend = jest.fn<() => Promise<never>>()
+        .mockRejectedValue(new Error('Network timeout'));
+      (service as any).resendClient = { emails: { send: mockSend } };
+
+      await expect(
+        service.sendEmail({ to: 'user@example.com', subject: 'Exc', html: '<p>Hi</p>' }),
+      ).rejects.toThrow('Network timeout');
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Exception sending email'),
+        expect.any(Error),
+      );
+      consoleSpy.mockRestore();
+    });
+  });
+
   describe('sendOrganizationInvitation', () => {
     it('calls sendEmail with invitation subject and org name', async () => {
       const configService = createConfigServiceMock({

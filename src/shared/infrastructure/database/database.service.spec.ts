@@ -186,4 +186,73 @@ describe('DatabaseService - Migration Tracking', () => {
       expect(result).toBeNull();
     });
   });
+
+  describe('onModuleDestroy', () => {
+    it('should close the pool', async () => {
+      await service.onModuleDestroy();
+
+      expect(mockPool.end).toHaveBeenCalled();
+    });
+  });
+
+  describe('runMigrations — all pending', () => {
+    it('should run all 4 migrations when none have run, covering all SQL bodies', async () => {
+      // CREATE TABLE _migrations
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })  // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [] })  // 001 hasMigrationRun -> not found
+        .mockResolvedValue({ rows: [] });     // all subsequent: migration SQL + recordMigration
+
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      await service.runMigrations();
+
+      // Helper to check query was called with SQL containing a substring
+      const expectQueryWith = (substring: string) => {
+        const calls = mockPool.query.mock.calls as Array<[string, unknown[]]>;
+        const found = calls.some(([sql]) => typeof sql === 'string' && sql.includes(substring));
+        expect(found).toBe(true);
+      };
+
+      // Verify CREATE TABLE calls for migration 001 (user, session, account, verification, jwks)
+      expectQueryWith('CREATE TABLE IF NOT EXISTS "user"');
+      expectQueryWith('CREATE TABLE IF NOT EXISTS session');
+      expectQueryWith('CREATE TABLE IF NOT EXISTS account');
+      expectQueryWith('CREATE TABLE IF NOT EXISTS verification');
+      expectQueryWith('CREATE TABLE IF NOT EXISTS jwks');
+
+      // Verify CREATE TABLE calls for migration 002 (organization, member, invitation)
+      expectQueryWith('CREATE TABLE IF NOT EXISTS organization');
+      expectQueryWith('CREATE TABLE IF NOT EXISTS member');
+      expectQueryWith('CREATE TABLE IF NOT EXISTS invitation');
+
+      // Verify INDEX calls for migration 003
+      expectQueryWith('CREATE INDEX IF NOT EXISTS "user_email_idx"');
+      expectQueryWith('CREATE INDEX IF NOT EXISTS "session_userId_idx"');
+
+      // Verify migration 004 ALTER TABLE
+      expectQueryWith('ALTER TABLE jwks');
+
+      // Should log completed with count
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('4 new'),
+      );
+      consoleSpy.mockRestore();
+    });
+
+    it('should log applied for each pending migration', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })  // CREATE TABLE _migrations
+        .mockResolvedValueOnce({ rows: [] })  // 001 not run
+        .mockResolvedValue({ rows: [] });     // all subsequent
+
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      await service.runMigrations();
+
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('001_better_auth_core_tables applied'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('002_better_auth_organization_tables applied'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('003_core_indexes applied'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('004_jwks_expires_at_column applied'));
+      consoleSpy.mockRestore();
+    });
+  });
 });
