@@ -1,0 +1,111 @@
+import { Injectable, Inject } from '@nestjs/common';
+import { Role, Permission } from '../../domain/models/role.entity';
+import { CreateRoleDto, UpdateRoleDto } from '../../api/dto';
+import { ROLE_REPOSITORY } from '../../domain/repositories/role.repository.interface';
+import type { IRoleRepository } from '../../domain/repositories/role.repository.interface';
+
+/**
+ * Service for managing roles in the RBAC system
+ */
+@Injectable()
+export class RoleService {
+  constructor(
+    @Inject(ROLE_REPOSITORY) private readonly roleRepo: IRoleRepository,
+  ) {}
+
+  /**
+   * Get all roles
+   */
+  async findAll(): Promise<Role[]> {
+    return this.roleRepo.findAll();
+  }
+
+  /**
+   * Find role by ID
+   */
+  async findById(id: string): Promise<Role | null> {
+    return this.roleRepo.findById(id);
+  }
+
+  /**
+   * Find role by name
+   */
+  async findByName(name: string): Promise<Role | null> {
+    return this.roleRepo.findByName(name);
+  }
+
+  /**
+   * Create a new role
+   */
+  async create(dto: CreateRoleDto): Promise<Role> {
+    return this.roleRepo.create(dto);
+  }
+
+  /**
+   * Update a role
+   */
+  async update(id: string, dto: UpdateRoleDto): Promise<Role | null> {
+    const existing = await this.roleRepo.findById(id);
+    if (!existing) {
+      return null;
+    }
+
+    const hasAnyField =
+      dto.displayName !== undefined ||
+      dto.description !== undefined ||
+      dto.color !== undefined;
+
+    if (!hasAnyField) {
+      return existing;
+    }
+
+    return this.roleRepo.update(id, dto);
+  }
+
+  /**
+   * Delete a role (only non-system roles)
+   */
+  async delete(id: string): Promise<void> {
+    const existing = await this.roleRepo.findById(id);
+    if (!existing) {
+      throw new Error('Role not found');
+    }
+    if (existing.isSystem) {
+      throw new Error('Cannot delete system role');
+    }
+
+    await this.roleRepo.remove(id);
+  }
+
+  /**
+   * Get permissions for a role
+   */
+  async getPermissions(roleId: string): Promise<Permission[]> {
+    return this.roleRepo.getPermissions(roleId);
+  }
+
+  /**
+   * Assign permissions to a role
+   */
+  async assignPermissions(roleId: string, permissionIds: string[]): Promise<void> {
+    await this.roleRepo.setPermissions(roleId, permissionIds);
+  }
+
+  /**
+   * Get user's effective permissions based on their role
+   */
+  async getUserPermissions(roleName: string): Promise<Permission[]> {
+    const role = await this.roleRepo.findByName(roleName);
+    if (!role) {
+      return [];
+    }
+    return this.roleRepo.getPermissions(role.id);
+  }
+
+  /**
+   * Check if a role has a specific permission
+   */
+  async hasPermission(roleName: string, resource: string, action: string): Promise<boolean> {
+    return this.roleRepo.hasPermission(roleName, resource, action);
+  }
+}

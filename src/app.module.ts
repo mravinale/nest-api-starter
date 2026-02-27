@@ -7,16 +7,18 @@ import { auth, setEmailService } from './auth';
 import { ConfigModule, ConfigService } from './config';
 import { EmailModule, EmailService } from './email';
 import { DatabaseModule } from './database';
-import { RbacModule } from './rbac';
-import { PlatformAdminModule } from './platform-admin/platform-admin.module';
-import { OrganizationModule } from './organization/organization.module';
-import { AdminModule } from './admin';
+import { AppTypeOrmModule } from './shared/infrastructure/database/typeorm.module';
+import { RbacModule } from './modules/rbac';
+import { PlatformAdminModule } from './modules/platform-admin';
+import { OrganizationModule } from './modules/organization';
+import { AdminModule } from './modules/admin';
 
 @Module({
   imports: [
     ConfigModule,
     EmailModule,
     DatabaseModule,
+    AppTypeOrmModule,
     RbacModule,
     PlatformAdminModule,
     OrganizationModule,
