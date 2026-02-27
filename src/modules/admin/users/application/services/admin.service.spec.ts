@@ -708,4 +708,83 @@ describe('AdminService', () => {
       expect(result.actions.impersonate).toBe(true);
     });
   });
+
+  describe('getBatchCapabilities', () => {
+    it('returns empty object when userIds is empty', async () => {
+      const result = await service.getBatchCapabilities({
+        actorUserId: 'admin-1',
+        userIds: [],
+        platformRole: 'admin',
+        activeOrganizationId: null,
+      });
+
+      expect(result).toEqual({});
+      expect(userRepo.findUserRole).not.toHaveBeenCalled();
+    });
+
+    it('returns capabilities keyed by userId for multiple users', async () => {
+      userRepo.findUserRole
+        .mockResolvedValueOnce('member')
+        .mockResolvedValueOnce('manager');
+
+      const result = await service.getBatchCapabilities({
+        actorUserId: 'admin-1',
+        userIds: ['user-1', 'user-2'],
+        platformRole: 'admin',
+        activeOrganizationId: null,
+      });
+
+      expect(Object.keys(result)).toEqual(['user-1', 'user-2']);
+      expect(result['user-1'].targetUserId).toBe('user-1');
+      expect(result['user-2'].targetUserId).toBe('user-2');
+      expect(result['user-1'].actions.ban).toBe(true);
+      expect(result['user-2'].actions.ban).toBe(true);
+    });
+
+    it('skips users whose role lookup throws (ForbiddenException)', async () => {
+      userRepo.findUserRole
+        .mockResolvedValueOnce('member')
+        .mockResolvedValueOnce(null);
+
+      const result = await service.getBatchCapabilities({
+        actorUserId: 'admin-1',
+        userIds: ['user-1', 'ghost'],
+        platformRole: 'admin',
+        activeOrganizationId: null,
+      });
+
+      expect(Object.keys(result)).toEqual(['user-1']);
+      expect(result['ghost']).toBeUndefined();
+    });
+
+    it('applies org scoping for manager role', async () => {
+      userRepo.findUserRole.mockResolvedValueOnce('member');
+      userRepo.findMemberInOrg.mockResolvedValueOnce({ id: 'member-row' });
+
+      const result = await service.getBatchCapabilities({
+        actorUserId: 'manager-1',
+        userIds: ['member-1'],
+        platformRole: 'manager',
+        activeOrganizationId: 'org-1',
+      });
+
+      expect(result['member-1'].actions.ban).toBe(true);
+      expect(userRepo.findMemberInOrg).toHaveBeenCalledWith('member-1', 'org-1');
+    });
+
+    it('returns self capabilities correctly in batch', async () => {
+      userRepo.findUserRole.mockResolvedValueOnce('admin');
+
+      const result = await service.getBatchCapabilities({
+        actorUserId: 'admin-1',
+        userIds: ['admin-1'],
+        platformRole: 'admin',
+        activeOrganizationId: null,
+      });
+
+      expect(result['admin-1'].isSelf).toBe(true);
+      expect(result['admin-1'].actions.update).toBe(true);
+      expect(result['admin-1'].actions.setRole).toBe(false);
+    });
+  });
 });

@@ -135,6 +135,23 @@ export class AdminUsersController {
     });
   }
 
+  @Post('capabilities/batch')
+  @RequirePermissions('user:read')
+  async getBatchCapabilities(
+    @Session() session: UserSession,
+    @Body() body: { userIds: string[] },
+  ) {
+    const platformRole = requireAdminOrManager(session);
+    const activeOrgId = requireActiveOrganizationIdForManager(platformRole, session);
+
+    return this.adminService.getBatchCapabilities({
+      actorUserId: session.user.id,
+      userIds: Array.isArray(body?.userIds) ? body.userIds : [],
+      platformRole,
+      activeOrganizationId: activeOrgId,
+    });
+  }
+
   @Get(':userId/capabilities')
   @RequirePermissions('user:read')
   async getCapabilities(@Session() session: UserSession, @Param('userId') userId: string) {

@@ -354,6 +354,32 @@ export class AdminService {
     };
   }
 
+  async getBatchCapabilities(params: {
+    actorUserId: string;
+    userIds: string[];
+    platformRole: 'admin' | 'manager';
+    activeOrganizationId: string | null;
+  }): Promise<Record<string, Awaited<ReturnType<AdminService['getUserCapabilities']>>>> {
+    const { actorUserId, userIds, platformRole, activeOrganizationId } = params;
+
+    if (userIds.length === 0) return {};
+
+    const settled = await Promise.allSettled(
+      userIds.map((targetUserId) =>
+        this.getUserCapabilities({ actorUserId, targetUserId, platformRole, activeOrganizationId }),
+      ),
+    );
+
+    const result: Record<string, Awaited<ReturnType<AdminService['getUserCapabilities']>>> = {};
+    for (let i = 0; i < userIds.length; i++) {
+      const outcome = settled[i];
+      if (outcome.status === 'fulfilled') {
+        result[userIds[i]] = outcome.value;
+      }
+    }
+    return result;
+  }
+
   async createUser(input: CreateUserInput, platformRole: 'admin' | 'manager', activeOrganizationId: string | null) {
     const allowed = getAllowedRoleNamesForCreator(platformRole);
     if (!allowed.includes(input.role)) {

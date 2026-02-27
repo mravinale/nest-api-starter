@@ -43,6 +43,7 @@ describe('AdminUsersController', () => {
     adminService = {
       getCreateUserMetadata: jest.fn(),
       getUserCapabilities: jest.fn(),
+      getBatchCapabilities: jest.fn(),
       listUsers: jest.fn(),
       createUser: jest.fn(),
       listUserSessions: jest.fn(),
@@ -162,6 +163,26 @@ describe('AdminUsersController', () => {
       null,
       'actor-admin',
     );
+  });
+
+  it('passes actor context to getBatchCapabilities', async () => {
+    adminService.getBatchCapabilities.mockResolvedValue({
+      'target-1': {
+        targetUserId: 'target-1',
+        targetRole: 'member',
+        isSelf: false,
+        actions: { update: true, setRole: true, ban: true, unban: true, setPassword: true, remove: true, revokeSessions: true, impersonate: true },
+      },
+    } as never);
+
+    await controller.getBatchCapabilities(baseSession, { userIds: ['target-1'] });
+
+    expect(adminService.getBatchCapabilities).toHaveBeenCalledWith({
+      actorUserId: 'actor-admin',
+      userIds: ['target-1'],
+      platformRole: 'admin',
+      activeOrganizationId: null,
+    });
   });
 
   it('passes actor context to getUserCapabilities', async () => {
