@@ -5,28 +5,24 @@ jest.mock('better-auth/crypto', () => ({
   verifyPassword: jest.fn(async () => true),
 }));
 
-jest.mock('jose', () => ({
-  SignJWT: jest.fn().mockImplementation(() => ({
-    setProtectedHeader: jest.fn().mockReturnThis(),
-    setIssuedAt: jest.fn().mockReturnThis(),
-    setExpirationTime: jest.fn().mockReturnThis(),
-    sign: jest.fn(async () => 'mock.jwt.token'),
-  })),
-  importPKCS8: jest.fn(async () => ({})),
-  importSPKI: jest.fn(async () => ({})),
-  jwtVerify: jest.fn(async () => ({ payload: {} })),
+jest.mock('../../utils/verification.utils', () => ({
+  buildVerificationToken: jest.fn(async () => 'mock.jwt.token'),
+  buildVerificationUrl: jest.fn(() => 'http://localhost:3000/api/auth/verify-email?token=mock.jwt.token&callbackURL=http%3A%2F%2Flocalhost%3A5173'),
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException } from '@nestjs/common';
 import { AdminService, CreateUserInput } from './admin.service';
-import { DatabaseService } from '../../../../database';
+import {
+  ADMIN_USER_REPOSITORY,
+  type IAdminUserRepository,
+} from '../../domain/repositories/admin-user.repository.interface';
 import { EmailService } from '../../../../email/email.service';
 import { ConfigService } from '../../../../config/config.service';
 
 describe('AdminService', () => {
   let service: AdminService;
-  let dbService: jest.Mocked<DatabaseService>;
+  let userRepo: jest.Mocked<IAdminUserRepository>;
 
   const mockRoles = [
     { name: 'admin', display_name: 'Admin', description: 'Platform admin', color: '#ff0000', is_system: true },
@@ -45,16 +41,36 @@ describe('AdminService', () => {
     email: 'test@example.com',
     role: 'member',
     emailVerified: false,
-    banned: false,
+    image: null as string | null,
+    banned: false as boolean | null,
+    banReason: null as string | null,
+    banExpires: null as Date | null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
 
   beforeEach(async () => {
-    const mockDbService = {
-      query: jest.fn(),
-      queryOne: jest.fn(),
-      transaction: jest.fn(),
+    const mockUserRepo: jest.Mocked<IAdminUserRepository> = {
+      findUserRole: jest.fn(),
+      findUserById: jest.fn(),
+      findMemberInOrg: jest.fn(),
+      findUserOrganization: jest.fn(),
+      updateUser: jest.fn(),
+      setUserRole: jest.fn(),
+      banUser: jest.fn(),
+      unbanUser: jest.fn(),
+      setUserPassword: jest.fn(),
+      removeUser: jest.fn(),
+      removeUsers: jest.fn(),
+      listUsers: jest.fn(),
+      createUser: jest.fn(),
+      findSessionByToken: jest.fn(),
+      revokeSession: jest.fn(),
+      revokeAllSessions: jest.fn(),
+      listUserSessions: jest.fn(),
+      listRoles: jest.fn(),
+      listOrganizations: jest.fn(),
+      findOrganizationById: jest.fn(),
     };
 
     const mockEmailService = {
@@ -73,14 +89,14 @@ describe('AdminService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
-        { provide: DatabaseService, useValue: mockDbService },
+        { provide: ADMIN_USER_REPOSITORY, useValue: mockUserRepo },
         { provide: EmailService, useValue: mockEmailService },
         { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
 
     service = module.get<AdminService>(AdminService);
-    dbService = module.get(DatabaseService);
+    userRepo = module.get(ADMIN_USER_REPOSITORY);
   });
 
   it('should be defined', () => {
@@ -89,8 +105,8 @@ describe('AdminService', () => {
 
   describe('getCreateUserMetadata', () => {
     it('should return all roles and organizations for admin', async () => {
-      dbService.query.mockResolvedValueOnce(mockRoles);
-      dbService.query.mockResolvedValueOnce(mockOrganizations);
+      userRepo.listRoles.mockResolvedValueOnce(mockRoles);
+      userRepo.listOrganizations.mockResolvedValueOnce(mockOrganizations);
 
       const result = await service.getCreateUserMetadata('admin', null);
 
@@ -100,8 +116,8 @@ describe('AdminService', () => {
     });
 
     it('should return only manager/member roles for manager', async () => {
-      dbService.query.mockResolvedValueOnce(mockRoles);
-      dbService.queryOne.mockResolvedValueOnce(mockOrganizations[0]);
+      userRepo.listRoles.mockResolvedValueOnce(mockRoles);
+      userRepo.findOrganizationById.mockResolvedValueOnce(mockOrganizations[0]);
 
       const result = await service.getCreateUserMetadata('manager', 'org-1');
 
@@ -110,8 +126,6 @@ describe('AdminService', () => {
     });
 
     it('should throw ForbiddenException for manager without active organization', async () => {
-      dbService.query.mockResolvedValueOnce(mockRoles);
-
       await expect(service.getCreateUserMetadata('manager', null)).rejects.toThrow(ForbiddenException);
     });
   });
@@ -162,21 +176,9 @@ describe('AdminService', () => {
     });
 
     it('should allow admin to change manager to member using target membership org when no active organization', async () => {
-      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
-        if (sql.includes('SELECT id FROM member')) {
-          return [{ id: 'member-row' }];
-        }
-        return [];
-      });
-
-      dbService.queryOne
-        .mockResolvedValueOnce({ role: 'manager' })
-        .mockResolvedValueOnce({ organizationId: 'org-1' })
-        .mockResolvedValueOnce({ ...mockUser, id: 'target-1', role: 'member' });
-
-      dbService.transaction.mockImplementation(async <T>(
-        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
-      ): Promise<T> => callback(queryMock));
+      userRepo.findUserRole.mockResolvedValueOnce('manager');
+      userRepo.findUserOrganization.mockResolvedValueOnce({ organizationId: 'org-1' });
+      userRepo.setUserRole.mockResolvedValueOnce({ ...mockUser, id: 'target-1', role: 'member' });
 
       const result = await service.setUserRole(
         { userId: 'target-1', role: 'member' },
@@ -185,36 +187,24 @@ describe('AdminService', () => {
         'actor-admin',
       );
 
-      expect(result.role).toBe('member');
-      expect(queryMock).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE member SET role = $1'),
-        ['member', 'org-1', 'target-1'],
+      expect(result!.role).toBe('member');
+      expect(userRepo.setUserRole).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'target-1', role: 'member', organizationId: 'org-1' }),
       );
     });
 
     it('should throw ForbiddenException for admin role change when no org can be resolved', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ role: 'manager' })
-        .mockResolvedValueOnce(null);
-
-      const queryMock = jest.fn(async (): Promise<unknown[]> => []);
-
-      dbService.transaction.mockImplementation(async <T>(
-        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
-      ): Promise<T> => callback(queryMock));
+      userRepo.findUserRole.mockResolvedValueOnce('manager');
+      userRepo.findUserOrganization.mockResolvedValueOnce(null);
+      userRepo.setUserRole.mockRejectedValueOnce(new ForbiddenException('Active organization required'));
 
       await expect(
-        service.setUserRole(
-          { userId: 'target-1', role: 'member' },
-          'admin',
-          null,
-          'actor-admin',
-        ),
+        service.setUserRole({ userId: 'target-1', role: 'member' }, 'admin', null, 'actor-admin'),
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('should allow self-update', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ ...mockUser, name: 'Self Updated' });
+      userRepo.updateUser.mockResolvedValueOnce({ ...mockUser, name: 'Self Updated' });
 
       const result = await service.updateUser(
         { userId: 'user-1', name: 'Self Updated' },
@@ -223,11 +213,11 @@ describe('AdminService', () => {
         'user-1',
       );
 
-      expect(result.name).toBe('Self Updated');
+      expect(result!.name).toBe('Self Updated');
     });
 
     it('should allow self password reset', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.setUserPassword.mockResolvedValueOnce(undefined);
 
       const result = await service.setUserPassword(
         { userId: 'user-1', newPassword: 'NewPass123!' },
@@ -262,28 +252,18 @@ describe('AdminService', () => {
     });
 
     it('should block admin from deleting another admin', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+      userRepo.findUserRole.mockResolvedValueOnce('admin');
 
       await expect(
-        service.removeUser(
-          { userId: 'target-admin' },
-          'admin',
-          null,
-          'actor-admin',
-        )
+        service.removeUser({ userId: 'target-admin' }, 'admin', null, 'actor-admin')
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('should block manager from updating manager', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'manager' });
+      userRepo.findUserRole.mockResolvedValueOnce('manager');
 
       await expect(
-        service.updateUser(
-          { userId: 'target-manager', name: 'Nope' },
-          'manager',
-          'org-1',
-          'actor-manager',
-        )
+        service.updateUser({ userId: 'target-manager', name: 'Nope' }, 'manager', 'org-1', 'actor-manager')
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -301,28 +281,18 @@ describe('AdminService', () => {
 
   describe('target action policy', () => {
     it('should block admin from banning another admin', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+      userRepo.findUserRole.mockResolvedValueOnce('admin');
 
       await expect(
-        service.banUser(
-          { userId: 'target-admin', banReason: 'Violation' },
-          'admin',
-          null,
-          'actor-admin',
-        )
+        service.banUser({ userId: 'target-admin', banReason: 'Violation' }, 'admin', null, 'actor-admin')
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('should block manager from banning another manager', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'manager' });
+      userRepo.findUserRole.mockResolvedValueOnce('manager');
 
       await expect(
-        service.banUser(
-          { userId: 'target-manager', banReason: 'Violation' },
-          'manager',
-          'org-1',
-          'actor-manager',
-        )
+        service.banUser({ userId: 'target-manager', banReason: 'Violation' }, 'manager', 'org-1', 'actor-manager')
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -340,8 +310,7 @@ describe('AdminService', () => {
 
   describe('listUsers', () => {
     it('should return all users for admin', async () => {
-      dbService.query.mockResolvedValueOnce([mockUser]);
-      dbService.queryOne.mockResolvedValueOnce({ count: '1' });
+      userRepo.listUsers.mockResolvedValueOnce({ data: [mockUser], total: 1 });
 
       const result = await service.listUsers({
         limit: 10,
@@ -366,17 +335,17 @@ describe('AdminService', () => {
 
   describe('updateUser', () => {
     it('should allow admin to update any user', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ ...mockUser, name: 'Updated Name' });
+      userRepo.updateUser.mockResolvedValueOnce({ ...mockUser, name: 'Updated Name' });
 
       const result = await service.updateUser({ userId: 'user-1', name: 'Updated Name' }, 'admin', null);
 
-      expect(result.name).toBe('Updated Name');
+      expect(result!.name).toBe('Updated Name');
     });
   });
 
   describe('banUser', () => {
     it('should allow admin to ban any user', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.banUser.mockResolvedValueOnce(undefined);
       const result = await service.banUser({ userId: 'user-1', banReason: 'Violation' }, 'admin', null);
       expect(result.success).toBe(true);
     });
@@ -384,7 +353,7 @@ describe('AdminService', () => {
 
   describe('unbanUser', () => {
     it('should allow admin to unban any user', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.unbanUser.mockResolvedValueOnce(undefined);
       const result = await service.unbanUser({ userId: 'user-1' }, 'admin', null);
       expect(result.success).toBe(true);
     });
@@ -392,7 +361,7 @@ describe('AdminService', () => {
 
   describe('setUserPassword', () => {
     it('should allow admin to change any user password', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.setUserPassword.mockResolvedValueOnce(undefined);
       const result = await service.setUserPassword({ userId: 'user-1', newPassword: 'NewPass123!' }, 'admin', null);
       expect(result.status).toBe(true);
     });
@@ -400,7 +369,7 @@ describe('AdminService', () => {
 
   describe('removeUser', () => {
     it('should allow admin to delete any user', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.removeUser.mockResolvedValueOnce(undefined);
       const result = await service.removeUser({ userId: 'user-1' }, 'admin', null);
       expect(result.success).toBe(true);
     });
@@ -408,7 +377,7 @@ describe('AdminService', () => {
 
   describe('removeUsers (bulk delete)', () => {
     it('should allow admin to bulk delete users', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.removeUsers.mockResolvedValueOnce(undefined);
       const result = await service.removeUsers({ userIds: ['user-1', 'user-2', 'user-3'] }, 'admin', null);
       expect(result.success).toBe(true);
       expect(result.deletedCount).toBe(3);
@@ -427,16 +396,17 @@ describe('AdminService', () => {
     });
 
     it('should throw ForbiddenException when manager tries to delete user outside org', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      userRepo.findMemberInOrg.mockResolvedValueOnce(null);
       await expect(
         service.removeUsers({ userIds: ['user-1'] }, 'manager', 'org-1')
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('should allow manager to bulk delete users in their organization', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ id: 'member-1' });
-      dbService.queryOne.mockResolvedValueOnce({ id: 'member-2' });
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.findMemberInOrg
+        .mockResolvedValueOnce({ id: 'member-1' })
+        .mockResolvedValueOnce({ id: 'member-2' });
+      userRepo.removeUsers.mockResolvedValueOnce(undefined);
       const result = await service.removeUsers({ userIds: ['user-1', 'user-2'] }, 'manager', 'org-1');
       expect(result.success).toBe(true);
       expect(result.deletedCount).toBe(2);
@@ -445,7 +415,7 @@ describe('AdminService', () => {
 
   describe('revokeSession', () => {
     it('should allow admin to revoke any session', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.revokeSession.mockResolvedValueOnce(undefined);
       const result = await service.revokeSession({ sessionToken: 'token-123' }, 'admin', null);
       expect(result.success).toBe(true);
     });
@@ -453,7 +423,7 @@ describe('AdminService', () => {
 
   describe('revokeAllSessions', () => {
     it('should allow admin to revoke all sessions for any user', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.revokeAllSessions.mockResolvedValueOnce(undefined);
       const result = await service.revokeAllSessions({ userId: 'user-1' }, 'admin', null);
       expect(result.success).toBe(true);
     });
@@ -461,8 +431,8 @@ describe('AdminService', () => {
 
   describe('listUserSessions', () => {
     it('should list sessions for admin', async () => {
-      const mockSessions = [{ id: 'session-1', userId: 'user-1', token: 'token-1' }];
-      dbService.query.mockResolvedValueOnce(mockSessions);
+      const mockSessions = [{ id: 'session-1', userId: 'user-1', token: 'token-1', expiresAt: new Date(), createdAt: new Date(), updatedAt: new Date(), ipAddress: null, userAgent: null }];
+      userRepo.listUserSessions.mockResolvedValueOnce(mockSessions);
 
       const result = await service.listUserSessions({
         userId: 'user-1',
@@ -484,36 +454,11 @@ describe('AdminService', () => {
 
   describe('createUser - happy path', () => {
     it('should allow admin to create a member with organization', async () => {
-      const createdUser = {
-        id: 'new-user-1',
-        name: 'New Member',
-        email: 'newmember@example.com',
-        role: 'member',
-        emailVerified: false,
-        banned: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
-        if (sql.includes('SELECT id FROM "user"')) return [];
-        return [];
-      });
-
-      dbService.transaction.mockImplementation(async <T>(
-        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
-      ): Promise<T> => callback(queryMock));
-
-      dbService.queryOne.mockResolvedValueOnce(createdUser);
+      const createdUser = { ...mockUser, id: 'new-user-1', name: 'New Member', email: 'newmember@example.com', role: 'member' };
+      userRepo.createUser.mockResolvedValueOnce(createdUser);
 
       const result = await service.createUser(
-        {
-          name: 'New Member',
-          email: 'newmember@example.com',
-          password: 'SecurePass123!',
-          role: 'member',
-          organizationId: 'org-1',
-        },
+        { name: 'New Member', email: 'newmember@example.com', password: 'SecurePass123!', role: 'member', organizationId: 'org-1' },
         'admin',
         null,
       );
@@ -522,35 +467,11 @@ describe('AdminService', () => {
     });
 
     it('should allow admin to create an admin user without organization', async () => {
-      const createdUser = {
-        id: 'new-admin-1',
-        name: 'New Admin',
-        email: 'newadmin@example.com',
-        role: 'admin',
-        emailVerified: false,
-        banned: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
-        if (sql.includes('SELECT id FROM "user"')) return [];
-        return [];
-      });
-
-      dbService.transaction.mockImplementation(async <T>(
-        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
-      ): Promise<T> => callback(queryMock));
-
-      dbService.queryOne.mockResolvedValueOnce(createdUser);
+      const createdUser = { ...mockUser, id: 'new-admin-1', name: 'New Admin', email: 'newadmin@example.com', role: 'admin' };
+      userRepo.createUser.mockResolvedValueOnce(createdUser);
 
       const result = await service.createUser(
-        {
-          name: 'New Admin',
-          email: 'newadmin@example.com',
-          password: 'SecurePass123!',
-          role: 'admin',
-        },
+        { name: 'New Admin', email: 'newadmin@example.com', password: 'SecurePass123!', role: 'admin' },
         'admin',
         null,
       );
@@ -559,24 +480,11 @@ describe('AdminService', () => {
     });
 
     it('should throw ForbiddenException when user already exists', async () => {
-      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
-        if (sql.includes('SELECT id FROM "user"')) return [{ id: 'existing-user' }];
-        return [];
-      });
-
-      dbService.transaction.mockImplementation(async <T>(
-        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
-      ): Promise<T> => callback(queryMock));
+      userRepo.createUser.mockRejectedValueOnce(new ForbiddenException('User already exists'));
 
       await expect(
         service.createUser(
-          {
-            name: 'Existing User',
-            email: 'existing@example.com',
-            password: 'SecurePass123!',
-            role: 'member',
-            organizationId: 'org-1',
-          },
+          { name: 'Existing User', email: 'existing@example.com', password: 'SecurePass123!', role: 'member', organizationId: 'org-1' },
           'admin',
           null,
         ),
@@ -586,9 +494,7 @@ describe('AdminService', () => {
 
   describe('listUsers with search', () => {
     it('should filter users by searchValue', async () => {
-      const filteredUsers = [mockUser];
-      dbService.query.mockResolvedValueOnce(filteredUsers);
-      dbService.queryOne.mockResolvedValueOnce({ count: '1' });
+      userRepo.listUsers.mockResolvedValueOnce({ data: [mockUser], total: 1 });
 
       const result = await service.listUsers({
         limit: 10,
@@ -603,8 +509,7 @@ describe('AdminService', () => {
     });
 
     it('should filter users by org for manager', async () => {
-      dbService.query.mockResolvedValueOnce([mockUser]);
-      dbService.queryOne.mockResolvedValueOnce({ count: '1' });
+      userRepo.listUsers.mockResolvedValueOnce({ data: [mockUser], total: 1 });
 
       const result = await service.listUsers({
         limit: 10,
@@ -619,9 +524,9 @@ describe('AdminService', () => {
 
   describe('listUserSessions for manager', () => {
     it('should list sessions for manager when user is in org', async () => {
-      const mockSessions = [{ id: 'session-1', userId: 'user-1', token: 'token-1' }];
-      dbService.queryOne.mockResolvedValueOnce({ id: 'member-row' });
-      dbService.query.mockResolvedValueOnce(mockSessions);
+      const mockSessions = [{ id: 'session-1', userId: 'user-1', token: 'token-1', expiresAt: new Date(), createdAt: new Date(), updatedAt: new Date(), ipAddress: null, userAgent: null }];
+      userRepo.findMemberInOrg.mockResolvedValueOnce({ id: 'member-row' });
+      userRepo.listUserSessions.mockResolvedValueOnce(mockSessions);
 
       const result = await service.listUserSessions({
         userId: 'user-1',
@@ -633,7 +538,7 @@ describe('AdminService', () => {
     });
 
     it('should throw ForbiddenException for manager when user is not in org', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      userRepo.findMemberInOrg.mockResolvedValueOnce(null);
 
       await expect(service.listUserSessions({
         userId: 'user-1',
@@ -645,16 +550,16 @@ describe('AdminService', () => {
 
   describe('revokeSession for manager', () => {
     it('should allow manager to revoke session for user in org', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ userId: 'user-1' });
-      dbService.queryOne.mockResolvedValueOnce({ id: 'member-row' });
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.findSessionByToken.mockResolvedValueOnce({ userId: 'user-1' });
+      userRepo.findMemberInOrg.mockResolvedValueOnce({ id: 'member-row' });
+      userRepo.revokeSession.mockResolvedValueOnce(undefined);
 
       const result = await service.revokeSession({ sessionToken: 'token-123' }, 'manager', 'org-1');
       expect(result.success).toBe(true);
     });
 
     it('should return success when session not found for manager', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      userRepo.findSessionByToken.mockResolvedValueOnce(null);
 
       const result = await service.revokeSession({ sessionToken: 'nonexistent' }, 'manager', 'org-1');
       expect(result.success).toBe(true);
@@ -669,8 +574,8 @@ describe('AdminService', () => {
 
   describe('revokeAllSessions for manager', () => {
     it('should allow manager to revoke all sessions for user in org', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ id: 'member-row' });
-      dbService.query.mockResolvedValueOnce([]);
+      userRepo.findMemberInOrg.mockResolvedValueOnce({ id: 'member-row' });
+      userRepo.revokeAllSessions.mockResolvedValueOnce(undefined);
 
       const result = await service.revokeAllSessions({ userId: 'user-1' }, 'manager', 'org-1');
       expect(result.success).toBe(true);
@@ -685,7 +590,7 @@ describe('AdminService', () => {
 
   describe('getTargetRole — branch coverage', () => {
     it('returns null when user row not found — covers !row branch', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      userRepo.findUserRole.mockResolvedValueOnce(null);
 
       await expect(
         service.getUserCapabilities({
@@ -698,9 +603,8 @@ describe('AdminService', () => {
     });
 
     it('returns member fallback for unknown role string — covers return member branch', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ role: 'custom-unknown-role' })
-        .mockResolvedValueOnce({ id: 'member-row' });
+      userRepo.findUserRole.mockResolvedValueOnce('custom-unknown-role');
+      userRepo.findMemberInOrg.mockResolvedValueOnce({ id: 'member-row' });
 
       const result = await service.getUserCapabilities({
         actorUserId: 'manager-1',
@@ -715,7 +619,7 @@ describe('AdminService', () => {
 
   describe('assertTargetActionAllowed — branch coverage', () => {
     it('returns early when actorUserId is undefined', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ ...mockUser, name: 'Updated' });
+      userRepo.updateUser.mockResolvedValueOnce({ ...mockUser, name: 'Updated' });
 
       const result = await service.updateUser(
         { userId: 'user-1', name: 'Updated' },
@@ -724,11 +628,11 @@ describe('AdminService', () => {
         undefined,
       );
 
-      expect(result.name).toBe('Updated');
+      expect(result!.name).toBe('Updated');
     });
 
     it('throws when target user not found', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      userRepo.findUserRole.mockResolvedValueOnce(null);
 
       await expect(
         service.banUser({ userId: 'ghost-user' }, 'admin', null, 'actor-1'),
@@ -738,7 +642,7 @@ describe('AdminService', () => {
 
   describe('updateUser — branch coverage', () => {
     it('throws when manager has no active organization', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+      userRepo.findUserRole.mockResolvedValueOnce('member');
 
       await expect(
         service.updateUser({ userId: 'user-1', name: 'X' }, 'manager', null, 'actor-mgr'),
@@ -754,7 +658,7 @@ describe('AdminService', () => {
 
   describe('banUser — branch coverage', () => {
     it('throws when manager has no active organization', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+      userRepo.findUserRole.mockResolvedValueOnce('member');
 
       await expect(
         service.banUser({ userId: 'user-1' }, 'manager', null, 'actor-mgr'),
@@ -764,7 +668,7 @@ describe('AdminService', () => {
 
   describe('unbanUser — branch coverage', () => {
     it('throws when manager has no active organization', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+      userRepo.findUserRole.mockResolvedValueOnce('member');
 
       await expect(
         service.unbanUser({ userId: 'user-1' }, 'manager', null, 'actor-mgr'),
@@ -774,7 +678,7 @@ describe('AdminService', () => {
 
   describe('setUserPassword — branch coverage', () => {
     it('throws when manager has no active organization', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+      userRepo.findUserRole.mockResolvedValueOnce('member');
 
       await expect(
         service.setUserPassword({ userId: 'user-1', newPassword: 'Pass123!' }, 'manager', null, 'actor-mgr'),
@@ -784,7 +688,7 @@ describe('AdminService', () => {
 
   describe('removeUser — branch coverage', () => {
     it('throws when manager has no active organization', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+      userRepo.findUserRole.mockResolvedValueOnce('member');
 
       await expect(
         service.removeUser({ userId: 'user-1' }, 'manager', null, 'actor-mgr'),
@@ -793,9 +697,8 @@ describe('AdminService', () => {
   });
 
   describe('listUsers — branch coverage', () => {
-    it('returns total 0 when totalRow is null', async () => {
-      dbService.query.mockResolvedValueOnce([]);
-      dbService.queryOne.mockResolvedValueOnce(null);
+    it('returns total 0 when repository returns 0', async () => {
+      userRepo.listUsers.mockResolvedValueOnce({ data: [], total: 0 });
 
       const result = await service.listUsers({
         limit: 10, offset: 0, platformRole: 'admin', activeOrganizationId: null,
@@ -806,20 +709,10 @@ describe('AdminService', () => {
   });
 
   describe('setUserRole — insert new member branch coverage', () => {
-    it('inserts new member row when member does not exist', async () => {
-      const queryMock = jest.fn(async (sql: string): Promise<unknown[]> => {
-        if (sql.includes('SELECT id FROM member WHERE "organizationId"')) return [];
-        return [];
-      });
-
-      dbService.queryOne
-        .mockResolvedValueOnce({ role: 'member' })
-        .mockResolvedValueOnce({ organizationId: 'org-1' })
-        .mockResolvedValueOnce({ ...mockUser, id: 'target-1', role: 'manager' });
-
-      dbService.transaction.mockImplementation(async <T>(
-        callback: (query: (sql: string, params?: unknown[]) => Promise<unknown[]>) => Promise<T>,
-      ): Promise<T> => callback(queryMock));
+    it('calls setUserRole with correct params when member does not exist in org', async () => {
+      userRepo.findUserRole.mockResolvedValueOnce('member');
+      userRepo.findUserOrganization.mockResolvedValueOnce({ organizationId: 'org-1' });
+      userRepo.setUserRole.mockResolvedValueOnce({ ...mockUser, id: 'target-1', role: 'manager' });
 
       await service.setUserRole(
         { userId: 'target-1', role: 'manager' },
@@ -828,16 +721,15 @@ describe('AdminService', () => {
         'actor-admin',
       );
 
-      expect(queryMock).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO member'),
-        expect.any(Array),
+      expect(userRepo.setUserRole).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'target-1', role: 'manager', organizationId: 'org-1' }),
       );
     });
   });
 
   describe('getUserCapabilities — branch coverage', () => {
     it('throws when target user not found', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      userRepo.findUserRole.mockResolvedValueOnce(null);
 
       await expect(
         service.getUserCapabilities({
@@ -850,7 +742,7 @@ describe('AdminService', () => {
     });
 
     it('sets isTargetInActiveOrganization=false when manager has no activeOrgId', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'member' });
+      userRepo.findUserRole.mockResolvedValueOnce('member');
 
       const result = await service.getUserCapabilities({
         actorUserId: 'manager-1',
@@ -866,7 +758,7 @@ describe('AdminService', () => {
 
   describe('getUserCapabilities', () => {
     it('returns self-safe capabilities for admin acting on self', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+      userRepo.findUserRole.mockResolvedValueOnce('admin');
 
       const result = await service.getUserCapabilities({
         actorUserId: 'admin-1',
@@ -885,7 +777,7 @@ describe('AdminService', () => {
     });
 
     it('blocks admin from sensitive actions against another admin', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ role: 'admin' });
+      userRepo.findUserRole.mockResolvedValueOnce('admin');
 
       const result = await service.getUserCapabilities({
         actorUserId: 'admin-1',
@@ -904,9 +796,8 @@ describe('AdminService', () => {
     });
 
     it('allows manager actions on member in active organization only', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ role: 'member' })
-        .mockResolvedValueOnce({ id: 'member-row' });
+      userRepo.findUserRole.mockResolvedValueOnce('member');
+      userRepo.findMemberInOrg.mockResolvedValueOnce({ id: 'member-row' });
 
       const result = await service.getUserCapabilities({
         actorUserId: 'manager-1',

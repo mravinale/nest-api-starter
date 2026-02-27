@@ -8,6 +8,7 @@ import { ConfigModule, ConfigService } from './config';
 import { EmailModule, EmailService } from './email';
 import { DatabaseModule } from './database';
 import { AppTypeOrmModule } from './shared/infrastructure/database/typeorm.module';
+import { SharedModule } from './shared/shared.module';
 import { RbacModule } from './modules/rbac';
 import { PlatformAdminModule } from './modules/platform-admin';
 import { OrganizationModule } from './modules/organization';
@@ -19,6 +20,7 @@ import { AdminModule } from './modules/admin';
     EmailModule,
     DatabaseModule,
     AppTypeOrmModule,
+    SharedModule,
     RbacModule,
     PlatformAdminModule,
     OrganizationModule,

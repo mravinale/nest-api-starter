@@ -11,12 +11,15 @@ import {
   getRoleLevel,
   filterAssignableRoles,
 } from './admin-organizations.service';
-import { DatabaseService } from '../../../../database';
+import {
+  IAdminOrgRepository,
+  ADMIN_ORG_REPOSITORY,
+} from '../../domain/repositories/admin-org.repository.interface';
 import { EmailService } from '../../../../email/email.service';
 
 describe('AdminOrganizationsService', () => {
   let service: AdminOrganizationsService;
-  let dbService: jest.Mocked<DatabaseService>;
+  let orgRepo: jest.Mocked<IAdminOrgRepository>;
   let emailService: jest.Mocked<EmailService>;
 
   const mockOrganization = {
@@ -30,10 +33,30 @@ describe('AdminOrganizationsService', () => {
   };
 
   beforeEach(async () => {
-    const mockDbService = {
-      query: jest.fn(),
-      queryOne: jest.fn(),
-      transaction: jest.fn(),
+    const mockOrgRepo: jest.Mocked<IAdminOrgRepository> = {
+      findAll: jest.fn(),
+      countAll: jest.fn(),
+      findById: jest.fn(),
+      findBasicById: jest.fn(),
+      findBySlug: jest.fn(),
+      createOrg: jest.fn(),
+      updateOrg: jest.fn(),
+      deleteOrg: jest.fn(),
+      getMembers: jest.fn(),
+      findMemberById: jest.fn(),
+      findMemberByUserId: jest.fn(),
+      findMemberByEmail: jest.fn(),
+      countAdmins: jest.fn(),
+      addMember: jest.fn(),
+      updateMemberRole: jest.fn(),
+      removeMember: jest.fn(),
+      findUserById: jest.fn(),
+      findPendingInvitation: jest.fn(),
+      findInvitationById: jest.fn(),
+      createInvitation: jest.fn(),
+      getInvitations: jest.fn(),
+      deleteInvitation: jest.fn(),
+      getRoles: jest.fn(),
     };
 
     const mockEmailService = {
@@ -46,13 +69,13 @@ describe('AdminOrganizationsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminOrganizationsService,
-        { provide: DatabaseService, useValue: mockDbService },
+        { provide: ADMIN_ORG_REPOSITORY, useValue: mockOrgRepo },
         { provide: EmailService, useValue: mockEmailService },
       ],
     }).compile();
 
     service = module.get<AdminOrganizationsService>(AdminOrganizationsService);
-    dbService = module.get(DatabaseService);
+    orgRepo = module.get(ADMIN_ORG_REPOSITORY);
     emailService = module.get(EmailService);
   });
 
@@ -62,8 +85,8 @@ describe('AdminOrganizationsService', () => {
 
   describe('findAll', () => {
     it('should return paginated organizations', async () => {
-      dbService.queryOne.mockResolvedValue({ count: '10' });
-      dbService.query.mockResolvedValue([mockOrganization]);
+      orgRepo.countAll.mockResolvedValue(10);
+      orgRepo.findAll.mockResolvedValue([mockOrganization]);
 
       const result = await service.findAll({ page: 1, limit: 20 });
 
@@ -76,20 +99,18 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should apply search filter', async () => {
-      dbService.queryOne.mockResolvedValue({ count: '1' });
-      dbService.query.mockResolvedValue([mockOrganization]);
+      orgRepo.countAll.mockResolvedValue(1);
+      orgRepo.findAll.mockResolvedValue([mockOrganization]);
 
       await service.findAll({ page: 1, limit: 20, search: 'test' });
 
-      expect(dbService.queryOne).toHaveBeenCalledWith(
-        expect.stringContaining('ILIKE'),
-        ['%test%'],
-      );
+      expect(orgRepo.countAll).toHaveBeenCalledWith('test');
+      expect(orgRepo.findAll).toHaveBeenCalledWith('test', 20, 0);
     });
 
     it('should handle empty results', async () => {
-      dbService.queryOne.mockResolvedValue({ count: '0' });
-      dbService.query.mockResolvedValue([]);
+      orgRepo.countAll.mockResolvedValue(0);
+      orgRepo.findAll.mockResolvedValue([]);
 
       const result = await service.findAll({ page: 1, limit: 20 });
 
@@ -101,17 +122,8 @@ describe('AdminOrganizationsService', () => {
 
   describe('create', () => {
     it('should create organization and manager membership for manager actor', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, created_at: new Date() });
-
-      dbService.transaction.mockImplementation(async (callback) => {
-        const mockQuery = (async (sql: string) =>
-          sql.includes('SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)')
-            ? []
-            : []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
-        await callback(mockQuery);
-        return undefined;
-      });
+      orgRepo.createOrg.mockResolvedValue(undefined);
+      orgRepo.findById.mockResolvedValue({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, created_at: new Date(), member_count: '0' });
 
       const created = await service.create(
         {
@@ -126,17 +138,11 @@ describe('AdminOrganizationsService', () => {
 
       expect(created.name).toBe('New Org');
       expect(created.slug).toBe('new-org');
-      expect(dbService.transaction).toHaveBeenCalledTimes(1);
+      expect(orgRepo.createOrg).toHaveBeenCalledTimes(1);
     });
 
     it('should reject duplicate organization slug', async () => {
-      dbService.transaction.mockImplementation(async (callback) => {
-        const mockQuery = (async (sql: string) =>
-          sql.includes('SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)')
-            ? [{ id: 'existing-org' }]
-            : []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
-        return callback(mockQuery);
-      });
+      orgRepo.createOrg.mockRejectedValue(new ConflictException('Organization slug already exists'));
 
       await expect(
         service.create(
@@ -157,21 +163,19 @@ describe('AdminOrganizationsService', () => {
     it('should create invitation and send email for admin actor', async () => {
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'org-1', name: 'Test Org', slug: 'test-org' })
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({
-          id: 'inv-1',
-          organizationId: 'org-1',
-          email: 'invitee@example.com',
-          role: 'member',
-          status: 'pending',
-          expiresAt,
-          inviterId: 'actor-1',
-          createdAt: new Date(),
-        });
-      dbService.query.mockResolvedValueOnce([]);
+      orgRepo.findBasicById.mockResolvedValue({ id: 'org-1', name: 'Test Org', slug: 'test-org' });
+      orgRepo.findMemberByEmail.mockResolvedValue(null);
+      orgRepo.findPendingInvitation.mockResolvedValue(null);
+      orgRepo.createInvitation.mockResolvedValue({
+        id: 'inv-1',
+        organizationId: 'org-1',
+        email: 'invitee@example.com',
+        role: 'member',
+        status: 'pending',
+        expiresAt,
+        inviterId: 'actor-1',
+        createdAt: new Date(),
+      });
 
       const result = await service.createInvitation(
         'org-1',
@@ -182,9 +186,13 @@ describe('AdminOrganizationsService', () => {
       );
 
       expect(result.email).toBe('invitee@example.com');
-      expect(dbService.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO invitation'),
-        expect.arrayContaining(['org-1', 'invitee@example.com', 'member', 'pending', 'actor-1']),
+      expect(orgRepo.createInvitation).toHaveBeenCalledWith(
+        expect.any(String),
+        'org-1',
+        'invitee@example.com',
+        'member',
+        expect.any(Date),
+        'actor-1',
       );
       expect(emailService.sendOrganizationInvitation).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -208,7 +216,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should throw NotFoundException when organization does not exist', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      orgRepo.findBasicById.mockResolvedValue(null);
 
       await expect(
         service.createInvitation(
@@ -222,9 +230,8 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should throw BadRequestException when invitee is already a member', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'org-1', name: 'Test Org', slug: 'test-org' })
-        .mockResolvedValueOnce({ id: 'member-1' });
+      orgRepo.findBasicById.mockResolvedValue({ id: 'org-1', name: 'Test Org', slug: 'test-org' });
+      orgRepo.findMemberByEmail.mockResolvedValue({ id: 'member-1' });
 
       await expect(
         service.createInvitation(
@@ -238,10 +245,9 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should throw ConflictException when pending invitation already exists', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'org-1', name: 'Test Org', slug: 'test-org' })
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ id: 'inv-existing' });
+      orgRepo.findBasicById.mockResolvedValue({ id: 'org-1', name: 'Test Org', slug: 'test-org' });
+      orgRepo.findMemberByEmail.mockResolvedValue(null);
+      orgRepo.findPendingInvitation.mockResolvedValue({ id: 'inv-existing' });
 
       await expect(
         service.createInvitation(
@@ -257,7 +263,7 @@ describe('AdminOrganizationsService', () => {
 
   describe('findById', () => {
     it('should return organization with member count', async () => {
-      dbService.queryOne.mockResolvedValue(mockOrganization);
+      orgRepo.findById.mockResolvedValue(mockOrganization);
 
       const result = await service.findById('org-1');
 
@@ -267,7 +273,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should return null for non-existent organization', async () => {
-      dbService.queryOne.mockResolvedValue(null);
+      orgRepo.findById.mockResolvedValue(null);
 
       const result = await service.findById('non-existent');
 
@@ -277,18 +283,18 @@ describe('AdminOrganizationsService', () => {
 
   describe('update', () => {
     it('should update organization name', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce(mockOrganization) // findById
-        .mockResolvedValueOnce({ ...mockOrganization, name: 'Updated Org' }); // update
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
+      orgRepo.updateOrg.mockResolvedValueOnce({ ...mockOrganization, name: 'Updated Org' });
 
       const result = await service.update('org-1', { name: 'Updated Org' });
 
       expect(result?.name).toBe('Updated Org');
-      expect(dbService.queryOne).toHaveBeenCalledTimes(2);
+      expect(orgRepo.findById).toHaveBeenCalledTimes(1);
+      expect(orgRepo.updateOrg).toHaveBeenCalledTimes(1);
     });
 
     it('should return null for non-existent organization', async () => {
-      dbService.queryOne.mockResolvedValue(null);
+      orgRepo.findById.mockResolvedValue(null);
 
       const result = await service.update('non-existent', { name: 'Test' });
 
@@ -296,31 +302,28 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should return existing org if no updates provided', async () => {
-      dbService.queryOne.mockResolvedValue(mockOrganization);
+      orgRepo.findById.mockResolvedValue(mockOrganization);
 
       const result = await service.update('org-1', {});
 
       expect(result?.id).toBe('org-1');
-      expect(dbService.queryOne).toHaveBeenCalledTimes(1);
+      expect(orgRepo.findById).toHaveBeenCalledTimes(1);
+      expect(orgRepo.updateOrg).not.toHaveBeenCalled();
     });
   });
 
   describe('delete', () => {
     it('should delete organization and related data', async () => {
-      dbService.queryOne.mockResolvedValue(mockOrganization);
-      dbService.transaction.mockImplementation(async (callback) => {
-        const mockQuery = (async () => []) as (sql: string, params?: unknown[]) => Promise<unknown[]>;
-        await callback(mockQuery);
-        return undefined;
-      });
+      orgRepo.findById.mockResolvedValue(mockOrganization);
+      orgRepo.deleteOrg.mockResolvedValue(undefined);
 
       await service.delete('org-1');
 
-      expect(dbService.transaction).toHaveBeenCalled();
+      expect(orgRepo.deleteOrg).toHaveBeenCalledWith('org-1');
     });
 
     it('should throw error for non-existent organization', async () => {
-      dbService.queryOne.mockResolvedValue(null);
+      orgRepo.findById.mockResolvedValue(null);
 
       await expect(service.delete('non-existent')).rejects.toThrow('Organization not found');
     });
@@ -337,7 +340,7 @@ describe('AdminOrganizationsService', () => {
         user_email: 'john@example.com',
         user_image: null,
       };
-      dbService.query.mockResolvedValue([mockMember]);
+      orgRepo.getMembers.mockResolvedValue([mockMember]);
 
       const result = await service.getMembers('org-1');
 
@@ -350,21 +353,17 @@ describe('AdminOrganizationsService', () => {
 
   describe('updateMemberRole', () => {
     it('should update member role for admin actor', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'member-1', role: 'member', userId: 'user-1' })
-        .mockResolvedValueOnce({ id: 'member-1', role: 'manager', userId: 'user-1', organizationId: 'org-1' });
+      orgRepo.findMemberById.mockResolvedValue({ id: 'member-1', role: 'member', userId: 'user-1' });
+      orgRepo.updateMemberRole.mockResolvedValue({ id: 'member-1', role: 'manager', userId: 'user-1', organizationId: 'org-1', createdAt: new Date() });
 
       const result = await service.updateMemberRole('org-1', 'member-1', 'manager', 'admin');
 
       expect(result.role).toBe('manager');
-      expect(dbService.query).toHaveBeenCalledWith(
-        'UPDATE member SET role = $1 WHERE id = $2 AND "organizationId" = $3',
-        ['manager', 'member-1', 'org-1'],
-      );
+      expect(orgRepo.updateMemberRole).toHaveBeenCalledWith('member-1', 'org-1', 'manager');
     });
 
     it('should block manager from changing another manager role', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ id: 'member-1', role: 'manager', userId: 'user-1' });
+      orgRepo.findMemberById.mockResolvedValue({ id: 'member-1', role: 'manager', userId: 'user-1' });
 
       await expect(service.updateMemberRole('org-1', 'member-1', 'member', 'manager')).rejects.toThrow(
         'Managers can only change member roles',
@@ -372,7 +371,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should throw NotFoundException when member does not exist', async () => {
-      dbService.queryOne.mockResolvedValueOnce(null);
+      orgRepo.findMemberById.mockResolvedValue(null);
 
       await expect(
         service.updateMemberRole('org-1', 'missing-member', 'member', 'admin'),
@@ -380,9 +379,8 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should block downgrading last admin in organization', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'member-1', role: 'admin', userId: 'user-1' })
-        .mockResolvedValueOnce({ count: '1' });
+      orgRepo.findMemberById.mockResolvedValue({ id: 'member-1', role: 'admin', userId: 'user-1' });
+      orgRepo.countAdmins.mockResolvedValue(1);
 
       await expect(service.updateMemberRole('org-1', 'member-1', 'manager', 'admin')).rejects.toThrow(
         'Cannot change role of the last organization admin',
@@ -392,22 +390,17 @@ describe('AdminOrganizationsService', () => {
 
   describe('removeMember', () => {
     it('should remove member for admin actor', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'member-1', role: 'member', userId: 'user-1' })
-        .mockResolvedValueOnce({ id: 'member-1' });
-      dbService.query.mockResolvedValueOnce([{ id: 'member-1' }]);
+      orgRepo.findMemberById.mockResolvedValue({ id: 'member-1', role: 'member', userId: 'user-1' });
+      orgRepo.removeMember.mockResolvedValue(true);
 
       const result = await service.removeMember('org-1', 'member-1', 'admin');
 
       expect(result.success).toBe(true);
-      expect(dbService.query).toHaveBeenCalledWith(
-        'DELETE FROM member WHERE id = $1 AND "organizationId" = $2 RETURNING id',
-        ['member-1', 'org-1'],
-      );
+      expect(orgRepo.removeMember).toHaveBeenCalledWith('member-1', 'org-1');
     });
 
     it('should block manager from removing non-member roles', async () => {
-      dbService.queryOne.mockResolvedValueOnce({ id: 'member-1', role: 'manager', userId: 'user-1' });
+      orgRepo.findMemberById.mockResolvedValue({ id: 'member-1', role: 'manager', userId: 'user-1' });
 
       await expect(service.removeMember('org-1', 'member-1', 'manager')).rejects.toThrow(
         'Managers can only remove members',
@@ -415,9 +408,8 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should block removing last admin in organization', async () => {
-      dbService.queryOne
-        .mockResolvedValueOnce({ id: 'member-1', role: 'admin', userId: 'user-1' })
-        .mockResolvedValueOnce({ count: '1' });
+      orgRepo.findMemberById.mockResolvedValue({ id: 'member-1', role: 'admin', userId: 'user-1' });
+      orgRepo.countAdmins.mockResolvedValue(1);
 
       await expect(service.removeMember('org-1', 'member-1', 'admin')).rejects.toThrow(
         'Cannot remove the last organization admin',
@@ -433,7 +425,7 @@ describe('AdminOrganizationsService', () => {
     ];
 
     it('should return all roles from database', async () => {
-      dbService.query.mockResolvedValue(mockRoles);
+      orgRepo.getRoles.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles();
 
@@ -446,7 +438,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should return all assignableRoles when no requesterRole provided', async () => {
-      dbService.query.mockResolvedValue(mockRoles);
+      orgRepo.getRoles.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles();
 
@@ -454,7 +446,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should filter assignableRoles for manager (only manager + member)', async () => {
-      dbService.query.mockResolvedValue(mockRoles);
+      orgRepo.getRoles.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles('manager');
 
@@ -463,7 +455,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should return all assignableRoles for admin', async () => {
-      dbService.query.mockResolvedValue(mockRoles);
+      orgRepo.getRoles.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles('admin');
 
@@ -471,7 +463,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should filter assignableRoles for member (only member)', async () => {
-      dbService.query.mockResolvedValue(mockRoles);
+      orgRepo.getRoles.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles('member');
 
@@ -479,7 +471,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should still return all roles metadata regardless of requesterRole', async () => {
-      dbService.query.mockResolvedValue(mockRoles);
+      orgRepo.getRoles.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles('manager');
 
@@ -489,7 +481,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should handle empty roles table', async () => {
-      dbService.query.mockResolvedValue([]);
+      orgRepo.getRoles.mockResolvedValue([]);
 
       const result = await service.getRoles();
 
@@ -497,18 +489,16 @@ describe('AdminOrganizationsService', () => {
       expect(result.assignableRoles).toEqual([]);
     });
 
-    it('should query roles table with correct SQL', async () => {
-      dbService.query.mockResolvedValue([]);
+    it('should call getRoles on the repository', async () => {
+      orgRepo.getRoles.mockResolvedValue([]);
 
       await service.getRoles();
 
-      expect(dbService.query).toHaveBeenCalledWith(
-        'SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC'
-      );
+      expect(orgRepo.getRoles).toHaveBeenCalled();
     });
 
     it('should filter assignableRoles for manager', async () => {
-      dbService.query.mockResolvedValue(mockRoles);
+      orgRepo.getRoles.mockResolvedValue(mockRoles);
 
       const result = await service.getRoles('manager');
 
@@ -516,7 +506,7 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should not allow assigning owner role for admin', async () => {
-      dbService.query.mockResolvedValue([
+      orgRepo.getRoles.mockResolvedValue([
         ...mockRoles,
         { name: 'owner', display_name: 'Owner', description: 'Organization owner', color: '#ffaa00', is_system: true },
       ]);

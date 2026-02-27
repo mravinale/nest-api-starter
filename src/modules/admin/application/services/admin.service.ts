@@ -1,8 +1,6 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { hashPassword } from 'better-auth/crypto';
-import * as jose from 'jose';
-import { DatabaseService } from '../../../../database';
 import { EmailService } from '../../../../email/email.service';
 import { ConfigService } from '../../../../config/config.service';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
@@ -10,6 +8,14 @@ import {
   getAllowedRoleNamesForCreator,
   requireActiveOrganizationIdForManager,
 } from '../../utils/admin.utils';
+import {
+  buildVerificationToken,
+  buildVerificationUrl,
+} from '../../utils/verification.utils';
+import {
+  type IAdminUserRepository,
+  ADMIN_USER_REPOSITORY,
+} from '../../domain/repositories/admin-user.repository.interface';
 
 export type CreateUserInput = {
   name: string;
@@ -22,25 +28,15 @@ export type CreateUserInput = {
 @Injectable()
 export class AdminService {
   constructor(
-    private readonly db: DatabaseService,
+    @Inject(ADMIN_USER_REPOSITORY) private readonly userRepo: IAdminUserRepository,
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
   ) {}
 
   private async getTargetRole(userId: string): Promise<'admin' | 'manager' | 'member' | null> {
-    const row = await this.db.queryOne<{ role: string }>(
-      'SELECT role FROM "user" WHERE id = $1',
-      [userId],
-    );
-
-    if (!row) {
-      return null;
-    }
-
-    if (row.role === 'admin' || row.role === 'manager' || row.role === 'member') {
-      return row.role;
-    }
-
+    const role = await this.userRepo.findUserRole(userId);
+    if (!role) return null;
+    if (role === 'admin' || role === 'manager' || role === 'member') return role;
     return 'member';
   }
 
@@ -80,13 +76,8 @@ export class AdminService {
   }
 
   private async assertUserInManagerOrg(userId: string, activeOrganizationId: string): Promise<void> {
-    const member = await this.db.queryOne<{ id: string }>(
-      'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
-      [activeOrganizationId, userId],
-    );
-    if (!member) {
-      throw new ForbiddenException('User is not in your organization');
-    }
+    const member = await this.userRepo.findMemberInOrg(userId, activeOrganizationId);
+    if (!member) throw new ForbiddenException('User is not in your organization');
   }
 
   private async resolveRoleAssignmentOrganizationId(params: {
@@ -95,49 +86,22 @@ export class AdminService {
     activeOrganizationId: string | null;
   }): Promise<string | null> {
     const { targetUserId, platformRole, activeOrganizationId } = params;
-
-    if (activeOrganizationId) {
-      return activeOrganizationId;
-    }
-
-    if (platformRole !== 'admin') {
-      return null;
-    }
-
-    const member = await this.db.queryOne<{ organizationId: string }>(
-      'SELECT "organizationId" as "organizationId" FROM member WHERE "userId" = $1 ORDER BY "createdAt" DESC LIMIT 1',
-      [targetUserId],
-    );
-
+    if (activeOrganizationId) return activeOrganizationId;
+    if (platformRole !== 'admin') return null;
+    const member = await this.userRepo.findUserOrganization(targetUserId);
     return member?.organizationId ?? null;
   }
 
   async getCreateUserMetadata(platformRole: 'admin' | 'manager', activeOrganizationId: string | null) {
-    const roles = await this.db.query<{
-      name: string;
-      display_name: string;
-      description: string | null;
-      color: string | null;
-      is_system: boolean;
-    }>(
-      'SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC',
-    );
-
+    const roles = await this.userRepo.listRoles();
     const allowedRoleNames = getAllowedRoleNamesForCreator(platformRole);
 
     let organizations: Array<{ id: string; name: string; slug: string }> = [];
     if (platformRole === 'admin') {
-      organizations = await this.db.query<{ id: string; name: string; slug: string }>(
-        'SELECT id, name, slug FROM organization ORDER BY name ASC',
-      );
+      organizations = await this.userRepo.listOrganizations();
     } else {
-      if (!activeOrganizationId) {
-        throw new ForbiddenException('Active organization required');
-      }
-      const org = await this.db.queryOne<{ id: string; name: string; slug: string }>(
-        'SELECT id, name, slug FROM organization WHERE id = $1',
-        [activeOrganizationId],
-      );
+      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
+      const org = await this.userRepo.findOrganizationById(activeOrganizationId);
       organizations = org ? [org] : [];
     }
 
@@ -172,28 +136,8 @@ export class AdminService {
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
     }
 
-    const updates: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    if (input.name !== undefined) {
-      updates.push(`name = $${idx++}`);
-      values.push(input.name);
-    }
-
-    if (updates.length === 0) {
-      throw new ForbiddenException('No data to update');
-    }
-
-    updates.push(`"updatedAt" = NOW()`);
-    values.push(input.userId);
-
-    const row = await this.db.queryOne<any>(
-      `UPDATE "user" SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, name, email, "emailVerified" as "emailVerified", role, image, banned, "banReason" as "banReason", "banExpires" as "banExpires", "createdAt" as "createdAt", "updatedAt" as "updatedAt"`,
-      values,
-    );
-
-    return row;
+    if (input.name === undefined) throw new ForbiddenException('No data to update');
+    return this.userRepo.updateUser(input.userId, { name: input.name });
   }
 
   async setUserRole(
@@ -221,49 +165,19 @@ export class AdminService {
 
     const organizationIdForRole =
       input.role === 'admin'
-        ? null
-        : await this.resolveRoleAssignmentOrganizationId({
+        ? undefined
+        : (await this.resolveRoleAssignmentOrganizationId({
             targetUserId: input.userId,
             platformRole,
             activeOrganizationId,
-          });
+          })) ?? undefined;
 
-    await this.db.transaction(async (query) => {
-      await query('UPDATE "user" SET role = $1, "updatedAt" = NOW() WHERE id = $2', [
-        input.role,
-        input.userId,
-      ]);
-
-      if (input.role === 'admin') {
-        await query('DELETE FROM member WHERE "userId" = $1', [input.userId]);
-      } else {
-        const orgId = organizationIdForRole;
-        if (!orgId) {
-          throw new ForbiddenException('Active organization required');
-        }
-        const existingMember = await query(
-          'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
-          [orgId, input.userId],
-        );
-        if (existingMember.length > 0) {
-          await query(
-            'UPDATE member SET role = $1 WHERE "organizationId" = $2 AND "userId" = $3',
-            [input.role, orgId, input.userId],
-          );
-        } else {
-          await query(
-            'INSERT INTO member (id, "organizationId", "userId", role, "createdAt") VALUES ($1, $2, $3, $4, NOW())',
-            [randomUUID(), orgId, input.userId, input.role],
-          );
-        }
-      }
+    return this.userRepo.setUserRole({
+      userId: input.userId,
+      role: input.role,
+      organizationId: organizationIdForRole,
+      newMemberId: randomUUID(),
     });
-
-    const updated = await this.db.queryOne<any>(
-      'SELECT id, name, email, "emailVerified" as "emailVerified", role, image, banned, "banReason" as "banReason", "banExpires" as "banExpires", "createdAt" as "createdAt", "updatedAt" as "updatedAt" FROM "user" WHERE id = $1',
-      [input.userId],
-    );
-    return updated;
   }
 
   async banUser(
@@ -284,10 +198,7 @@ export class AdminService {
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
     }
 
-    await this.db.query(
-      'UPDATE "user" SET banned = true, "banReason" = $1, "updatedAt" = NOW() WHERE id = $2',
-      [input.banReason ?? null, input.userId],
-    );
+    await this.userRepo.banUser(input.userId, input.banReason);
     return { success: true };
   }
 
@@ -309,10 +220,7 @@ export class AdminService {
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
     }
 
-    await this.db.query(
-      'UPDATE "user" SET banned = false, "banReason" = NULL, "banExpires" = NULL, "updatedAt" = NOW() WHERE id = $1',
-      [input.userId],
-    );
+    await this.userRepo.unbanUser(input.userId);
     return { success: true };
   }
 
@@ -335,10 +243,7 @@ export class AdminService {
     }
 
     const hashed = await hashPassword(input.newPassword);
-    await this.db.query(
-      'UPDATE account SET password = $1, "updatedAt" = NOW() WHERE "userId" = $2 AND "providerId" = $3',
-      [hashed, input.userId, 'credential'],
-    );
+    await this.userRepo.setUserPassword(input.userId, hashed);
     return { status: true };
   }
 
@@ -359,7 +264,7 @@ export class AdminService {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
     }
-    await this.db.query('DELETE FROM "user" WHERE id = $1', [input.userId]);
+    await this.userRepo.removeUser(input.userId);
     return { success: true };
   }
 
@@ -369,34 +274,21 @@ export class AdminService {
     activeOrganizationId: string | null,
     actorUserId?: string,
   ) {
-    if (input.userIds.length === 0) {
-      return { success: true, deletedCount: 0 };
-    }
+    if (input.userIds.length === 0) return { success: true, deletedCount: 0 };
 
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       for (const userId of input.userIds) {
-        await this.assertTargetActionAllowed({
-          actorUserId,
-          targetUserId: userId,
-          platformRole,
-          allowSelf: false,
-        });
+        await this.assertTargetActionAllowed({ actorUserId, targetUserId: userId, platformRole, allowSelf: false });
         await this.assertUserInManagerOrg(userId, activeOrganizationId);
       }
     } else {
       for (const userId of input.userIds) {
-        await this.assertTargetActionAllowed({
-          actorUserId,
-          targetUserId: userId,
-          platformRole,
-          allowSelf: false,
-        });
+        await this.assertTargetActionAllowed({ actorUserId, targetUserId: userId, platformRole, allowSelf: false });
       }
     }
 
-    const placeholders = input.userIds.map((_, i) => `$${i + 1}`).join(', ');
-    await this.db.query(`DELETE FROM "user" WHERE id IN (${placeholders})`, input.userIds);
+    await this.userRepo.removeUsers(input.userIds);
     return { success: true, deletedCount: input.userIds.length };
   }
 
@@ -407,14 +299,11 @@ export class AdminService {
   ) {
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
-      const session = await this.db.queryOne<{ userId: string }>(
-        'SELECT "userId" as "userId" FROM session WHERE token = $1',
-        [input.sessionToken],
-      );
+      const session = await this.userRepo.findSessionByToken(input.sessionToken);
       if (!session) return { success: true };
       await this.assertUserInManagerOrg(session.userId, activeOrganizationId);
     }
-    await this.db.query('DELETE FROM session WHERE token = $1', [input.sessionToken]);
+    await this.userRepo.revokeSession(input.sessionToken);
     return { success: true };
   }
 
@@ -427,7 +316,7 @@ export class AdminService {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
       await this.assertUserInManagerOrg(input.userId, activeOrganizationId);
     }
-    await this.db.query('DELETE FROM session WHERE "userId" = $1', [input.userId]);
+    await this.userRepo.revokeAllSessions(input.userId);
     return { success: true };
   }
 
@@ -439,43 +328,9 @@ export class AdminService {
     platformRole: 'admin' | 'manager';
   }) {
     const { limit, offset, searchValue, platformRole, activeOrganizationId } = params;
-
-    const where: string[] = [];
-    const values: unknown[] = [];
-
-    if (searchValue) {
-      values.push(`%${searchValue}%`);
-      where.push(`(u.name ILIKE $${values.length} OR u.email ILIKE $${values.length})`);
-    }
-
-    if (platformRole === 'manager') {
-      if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
-      values.push(activeOrganizationId);
-      where.push(`EXISTS (SELECT 1 FROM member m WHERE m."userId" = u.id AND m."organizationId" = $${values.length})`);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-    const users = await this.db.query<any>(
-      `SELECT u.id, u.name, u.email, u."emailVerified" as "emailVerified", u.role, u.image, u.banned, u."banReason" as "banReason", u."banExpires" as "banExpires", u."createdAt" as "createdAt", u."updatedAt" as "updatedAt"
-       FROM "user" u
-       ${whereSql}
-       ORDER BY u."createdAt" DESC
-       LIMIT ${limit} OFFSET ${offset}`,
-      values,
-    );
-
-    const totalRow = await this.db.queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text as count FROM "user" u ${whereSql}`,
-      values,
-    );
-
-    return {
-      data: users,
-      total: totalRow ? parseInt(totalRow.count, 10) : 0,
-      limit,
-      offset,
-    };
+    if (platformRole === 'manager' && !activeOrganizationId) throw new ForbiddenException('Active organization required');
+    const result = await this.userRepo.listUsers({ limit, offset, searchValue, activeOrganizationId, platformRole });
+    return { ...result, limit, offset };
   }
 
   async getUserCapabilities(params: {
@@ -487,9 +342,7 @@ export class AdminService {
     const { actorUserId, targetUserId, platformRole, activeOrganizationId } = params;
 
     const targetRole = await this.getTargetRole(targetUserId);
-    if (!targetRole) {
-      throw new ForbiddenException('Target user not found');
-    }
+    if (!targetRole) throw new ForbiddenException('Target user not found');
 
     const isSelf = actorUserId === targetUserId;
     const isTargetMember = targetRole === 'member';
@@ -499,10 +352,7 @@ export class AdminService {
       if (!activeOrganizationId) {
         isTargetInActiveOrganization = false;
       } else {
-        const member = await this.db.queryOne<{ id: string }>(
-          'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
-          [activeOrganizationId, targetUserId],
-        );
+        const member = await this.userRepo.findMemberInOrg(targetUserId, activeOrganizationId);
         isTargetInActiveOrganization = !!member;
       }
     }
@@ -557,52 +407,27 @@ export class AdminService {
     const accountId = randomUUID();
     const hashed = await hashPassword(input.password);
 
-    await this.db.transaction(async (query) => {
-      const existing = await query('SELECT id FROM "user" WHERE email = $1', [input.email.toLowerCase()]);
-      if (existing.length > 0) {
-        throw new ForbiddenException('User already exists');
-      }
-
-      await query(
-        `INSERT INTO "user" (id, name, email, "emailVerified", image, "createdAt", "updatedAt", role, banned)
-         VALUES ($1, $2, $3, false, NULL, NOW(), NOW(), $4, false)`,
-        [userId, input.name, input.email.toLowerCase(), input.role],
-      );
-
-      await query(
-        `INSERT INTO account (id, "accountId", "providerId", "userId", password, "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
-        [accountId, userId, 'credential', userId, hashed],
-      );
-
-      if (organizationIdToUse) {
-        await query(
-          `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
-           VALUES ($1, $2, $3, $4, NOW())`,
-          [randomUUID(), organizationIdToUse, userId, input.role],
-        );
-      }
+    const created = await this.userRepo.createUser({
+      userId,
+      accountId,
+      name: input.name,
+      email: input.email,
+      hashedPassword: hashed,
+      role: input.role,
+      organizationId: organizationIdToUse ?? undefined,
     });
 
-    const created = await this.db.queryOne<any>(
-      'SELECT id, name, email, "emailVerified" as "emailVerified", role, image, banned, "banReason" as "banReason", "banExpires" as "banExpires", "createdAt" as "createdAt", "updatedAt" as "updatedAt" FROM "user" WHERE id = $1',
-      [userId],
-    );
-
     try {
-      const secret = new TextEncoder().encode(this.configService.getAuthSecret());
-      const expiresIn = 3600;
-      
-      const verificationToken = await new jose.SignJWT({ email: input.email.toLowerCase() })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setExpirationTime(`${expiresIn}s`)
-        .setIssuedAt()
-        .sign(secret);
-      
-      const baseUrl = this.configService.getBaseUrl();
-      const feUrl = this.configService.getFeUrl();
-      const verificationUrl = `${baseUrl}/api/auth/verify-email?token=${verificationToken}&callbackURL=${encodeURIComponent(feUrl)}`;
-      
+      const verificationToken = await buildVerificationToken(
+        input.email,
+        this.configService.getAuthSecret(),
+      );
+      const verificationUrl = buildVerificationUrl(
+        verificationToken,
+        this.configService.getBaseUrl(),
+        this.configService.getFeUrl(),
+      );
+
       console.log('📧 [AdminService] Sending verification email to:', input.email);
       await this.emailService.sendEmailVerification({
         user: { id: userId, email: input.email, name: input.name },
@@ -626,19 +451,9 @@ export class AdminService {
 
     if (platformRole === 'manager') {
       if (!activeOrganizationId) throw new ForbiddenException('Active organization required');
-      const member = await this.db.queryOne<{ id: string }>(
-        'SELECT id FROM member WHERE "organizationId" = $1 AND "userId" = $2',
-        [activeOrganizationId, userId],
-      );
-      if (!member) {
-        throw new ForbiddenException('User is not in your organization');
-      }
+      const member = await this.userRepo.findMemberInOrg(userId, activeOrganizationId);
+      if (!member) throw new ForbiddenException('User is not in your organization');
     }
-
-    const sessions = await this.db.query<any>(
-      'SELECT id, "userId" as "userId", token, "expiresAt" as "expiresAt", "createdAt" as "createdAt", "updatedAt" as "updatedAt", "ipAddress" as "ipAddress", "userAgent" as "userAgent" FROM session WHERE "userId" = $1 ORDER BY "createdAt" DESC',
-      [userId],
-    );
-    return sessions;
+    return this.userRepo.listUserSessions(userId);
   }
 }

@@ -3,12 +3,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PermissionsGuard } from './permissions.guard';
-import { DatabaseService } from '../../database';
+import { RoleService } from '../../modules/rbac/application/services';
 
 describe('PermissionsGuard', () => {
   let guard: PermissionsGuard;
   let reflector: Reflector;
-  let dbService: jest.Mocked<DatabaseService>;
+  let roleService: jest.Mocked<Pick<RoleService, 'getUserPermissions'>>;
 
   const createMockExecutionContext = (session: unknown): ExecutionContext => {
     return {
@@ -20,23 +20,29 @@ describe('PermissionsGuard', () => {
     } as ExecutionContext;
   };
 
+  const makePermission = (resource: string, action: string) => ({
+    id: `${resource}-${action}`,
+    resource,
+    action,
+    description: null,
+  });
+
   beforeEach(async () => {
-    const mockDbService = {
-      query: jest.fn(),
-      queryOne: jest.fn(),
+    const mockRoleService = {
+      getUserPermissions: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PermissionsGuard,
         Reflector,
-        { provide: DatabaseService, useValue: mockDbService },
+        { provide: RoleService, useValue: mockRoleService },
       ],
     }).compile();
 
     guard = module.get<PermissionsGuard>(PermissionsGuard);
     reflector = module.get<Reflector>(Reflector);
-    dbService = module.get(DatabaseService);
+    roleService = module.get(RoleService);
   });
 
   it('should be defined', () => {
@@ -62,20 +68,24 @@ describe('PermissionsGuard', () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['user:read']);
     });
 
-    it('should allow access for admin role without DB check', async () => {
+    it('should allow access for admin role without RoleService call', async () => {
       const context = createMockExecutionContext({ user: { role: 'admin' } });
       await expect(guard.canActivate(context)).resolves.toBe(true);
-      expect(dbService.query).not.toHaveBeenCalled();
+      expect(roleService.getUserPermissions).not.toHaveBeenCalled();
     });
 
     it('should allow access for non-admin with required permissions', async () => {
-      dbService.query.mockResolvedValueOnce([{ permission: 'user:read' }]);
+      roleService.getUserPermissions.mockResolvedValueOnce([
+        makePermission('user', 'read'),
+      ]);
       const context = createMockExecutionContext({ user: { role: 'manager' } });
       await expect(guard.canActivate(context)).resolves.toBe(true);
     });
 
     it('should deny access for non-admin missing required permissions', async () => {
-      dbService.query.mockResolvedValueOnce([{ permission: 'role:list' }]);
+      roleService.getUserPermissions.mockResolvedValueOnce([
+        makePermission('role', 'list'),
+      ]);
       const context = createMockExecutionContext({ user: { role: 'member' } });
       await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
     });
@@ -91,7 +101,7 @@ describe('PermissionsGuard', () => {
     });
 
     it('should deny access when user has no permissions at all', async () => {
-      dbService.query.mockResolvedValueOnce([]);
+      roleService.getUserPermissions.mockResolvedValueOnce([]);
       const context = createMockExecutionContext({ user: { role: 'member' } });
       await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
     });
@@ -103,17 +113,19 @@ describe('PermissionsGuard', () => {
     });
 
     it('should allow access when user has all required permissions', async () => {
-      dbService.query.mockResolvedValueOnce([
-        { permission: 'user:read' },
-        { permission: 'user:create' },
-        { permission: 'user:update' },
+      roleService.getUserPermissions.mockResolvedValueOnce([
+        makePermission('user', 'read'),
+        makePermission('user', 'create'),
+        makePermission('user', 'update'),
       ]);
       const context = createMockExecutionContext({ user: { role: 'manager' } });
       await expect(guard.canActivate(context)).resolves.toBe(true);
     });
 
     it('should deny access when user has only some required permissions', async () => {
-      dbService.query.mockResolvedValueOnce([{ permission: 'user:read' }]);
+      roleService.getUserPermissions.mockResolvedValueOnce([
+        makePermission('user', 'read'),
+      ]);
       const context = createMockExecutionContext({ user: { role: 'manager' } });
       await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
     });

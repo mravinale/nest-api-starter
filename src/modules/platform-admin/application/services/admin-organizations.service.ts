@@ -2,21 +2,24 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { DatabaseService } from '../../../../database';
 import { EmailService } from '../../../../email/email.service';
 import {
   PaginationQuery,
   UpdateOrganizationDto,
-  OrganizationRow,
   Organization,
   OrganizationWithMemberCount,
   rowToOrganization,
 } from '../../api/dto';
 import { getAllowedRoleNamesForCreator } from '../../../admin/utils/admin.utils';
+import {
+  type IAdminOrgRepository,
+  ADMIN_ORG_REPOSITORY,
+} from '../../domain/repositories/admin-org.repository.interface';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -61,7 +64,7 @@ export function filterAssignableRoles(allRoleNames: string[], requesterRole: str
 @Injectable()
 export class AdminOrganizationsService {
   constructor(
-    private readonly db: DatabaseService,
+    @Inject(ADMIN_ORG_REPOSITORY) private readonly orgRepo: IAdminOrgRepository,
     private readonly emailService: EmailService,
   ) {}
 
@@ -76,21 +79,14 @@ export class AdminOrganizationsService {
     roles: Array<{ name: string; displayName: string; description: string | null; color: string | null; isSystem: boolean }>;
     assignableRoles: string[];
   }> {
-    const roles = await this.db.query<{
-      name: string;
-      display_name: string;
-      description: string | null;
-      color: string | null;
-      is_system: boolean;
-    }>('SELECT name, display_name, description, color, is_system FROM roles ORDER BY is_system DESC, name ASC');
-
-    const allRoleNames = roles.map((r) => r.name);
+    const rows = await this.orgRepo.getRoles();
+    const allRoleNames = rows.map((r) => r.name);
     const assignableRoles = requesterRole
       ? filterAssignableRoles(allRoleNames, requesterRole)
       : allRoleNames;
 
     return {
-      roles: roles.map((r) => ({
+      roles: rows.map((r) => ({
         name: r.name,
         displayName: r.display_name,
         description: r.description,
@@ -136,33 +132,18 @@ export class AdminOrganizationsService {
     const creatorMemberRole = actor.platformRole === 'admin' ? 'admin' : 'manager';
     const metadataJson = input.metadata === undefined ? null : JSON.stringify(input.metadata);
 
-    await this.db.transaction(async (query) => {
-      const existing = (await query(
-        'SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)',
-        [slug],
-      )) as Array<{ id: string }>;
-      if (existing.length > 0) {
-        throw new ConflictException('Organization slug already exists');
-      }
-
-      await query(
-        `INSERT INTO organization (id, name, slug, logo, "createdAt", metadata)
-         VALUES ($1, $2, $3, $4, NOW(), $5)`,
-        [organizationId, name, slug, input.logo ?? null, metadataJson],
-      );
-
-      await query(
-        `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
-         VALUES ($1, $2, $3, $4, NOW())`,
-        [memberId, organizationId, actor.id, creatorMemberRole],
-      );
+    await this.orgRepo.createOrg({
+      id: organizationId,
+      name,
+      slug,
+      logo: input.logo ?? null,
+      metadataJson,
+      actorId: actor.id,
+      actorRole: creatorMemberRole,
+      memberId,
     });
 
-    const row = await this.db.queryOne<OrganizationRow>(
-      'SELECT * FROM organization WHERE id = $1',
-      [organizationId],
-    );
-
+    const row = await this.orgRepo.findById(organizationId);
     if (!row) {
       throw new InternalServerErrorException('Failed to create organization');
     }
@@ -177,36 +158,10 @@ export class AdminOrganizationsService {
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(100, Math.max(1, query.limit ?? 20));
     const offset = (page - 1) * limit;
-    const search = query.search?.trim();
+    const search = query.search?.trim() || undefined;
 
-    let whereClause = '';
-    const params: unknown[] = [];
-
-    if (search) {
-      whereClause = 'WHERE o.name ILIKE $1 OR o.slug ILIKE $1';
-      params.push(`%${search}%`);
-    }
-
-    const countResult = await this.db.queryOne<{ count: string }>(
-      `SELECT COUNT(*) as count FROM organization o ${whereClause}`,
-      params,
-    );
-    const total = parseInt(countResult?.count ?? '0', 10);
-
-    const dataParams = [...params, limit, offset];
-    const limitParam = params.length + 1;
-    const offsetParam = params.length + 2;
-
-    const rows = await this.db.query<OrganizationRow & { member_count: string }>(
-      `SELECT o.*, COUNT(m.id) as member_count
-       FROM organization o
-       LEFT JOIN member m ON m."organizationId" = o.id
-       ${whereClause}
-       GROUP BY o.id
-       ORDER BY o."createdAt" DESC
-       LIMIT $${limitParam} OFFSET $${offsetParam}`,
-      dataParams,
-    );
+    const total = await this.orgRepo.countAll(search);
+    const rows = await this.orgRepo.findAll(search, limit, offset);
 
     const data: OrganizationWithMemberCount[] = rows.map((row) => ({
       ...rowToOrganization(row),
@@ -226,19 +181,8 @@ export class AdminOrganizationsService {
    * Get a single organization by ID
    */
   async findById(id: string): Promise<OrganizationWithMemberCount | null> {
-    const row = await this.db.queryOne<OrganizationRow & { member_count: string }>(
-      `SELECT o.*, COUNT(m.id) as member_count
-       FROM organization o
-       LEFT JOIN member m ON m."organizationId" = o.id
-       WHERE o.id = $1
-       GROUP BY o.id`,
-      [id],
-    );
-
-    if (!row) {
-      return null;
-    }
-
+    const row = await this.orgRepo.findById(id);
+    if (!row) return null;
     return {
       ...rowToOrganization(row),
       memberCount: parseInt(row.member_count, 10),
@@ -250,42 +194,17 @@ export class AdminOrganizationsService {
    */
   async update(id: string, dto: UpdateOrganizationDto): Promise<Organization | null> {
     const existing = await this.findById(id);
-    if (!existing) {
-      return null;
-    }
+    if (!existing) return null;
 
-    const updates: string[] = [];
-    const values: unknown[] = [];
-    let paramIndex = 1;
+    const updates: Record<string, unknown> = {};
+    if (dto.name !== undefined) updates.name = dto.name;
+    if (dto.slug !== undefined) updates.slug = dto.slug;
+    if (dto.logo !== undefined) updates.logo = dto.logo;
+    if (dto.metadata !== undefined) updates.metadataJson = JSON.stringify(dto.metadata);
 
-    if (dto.name !== undefined) {
-      updates.push(`name = $${paramIndex++}`);
-      values.push(dto.name);
-    }
-    if (dto.slug !== undefined) {
-      updates.push(`slug = $${paramIndex++}`);
-      values.push(dto.slug);
-    }
-    if (dto.logo !== undefined) {
-      updates.push(`logo = $${paramIndex++}`);
-      values.push(dto.logo);
-    }
-    if (dto.metadata !== undefined) {
-      updates.push(`metadata = $${paramIndex++}`);
-      values.push(JSON.stringify(dto.metadata));
-    }
+    if (Object.keys(updates).length === 0) return existing;
 
-    if (updates.length === 0) {
-      return existing;
-    }
-
-    values.push(id);
-
-    const row = await this.db.queryOne<OrganizationRow>(
-      `UPDATE organization SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
-      values,
-    );
-
+    const row = await this.orgRepo.updateOrg(id, updates);
     return row ? rowToOrganization(row) : null;
   }
 
@@ -294,15 +213,8 @@ export class AdminOrganizationsService {
    */
   async delete(id: string): Promise<void> {
     const existing = await this.findById(id);
-    if (!existing) {
-      throw new Error('Organization not found');
-    }
-
-    await this.db.transaction(async (query) => {
-      await query('DELETE FROM invitation WHERE "organizationId" = $1', [id]);
-      await query('DELETE FROM member WHERE "organizationId" = $1', [id]);
-      await query('DELETE FROM organization WHERE id = $1', [id]);
-    });
+    if (!existing) throw new NotFoundException('Organization not found');
+    await this.orgRepo.deleteOrg(id);
   }
 
   /**
@@ -320,24 +232,7 @@ export class AdminOrganizationsService {
       image: string | null;
     };
   }>> {
-    const rows = await this.db.query<{
-      id: string;
-      userId: string;
-      role: string;
-      createdAt: Date;
-      user_name: string;
-      user_email: string;
-      user_image: string | null;
-    }>(
-      `SELECT m.id, m."userId", m.role, m."createdAt",
-              u.name as user_name, u.email as user_email, u.image as user_image
-       FROM member m
-       JOIN "user" u ON u.id = m."userId"
-       WHERE m."organizationId" = $1
-       ORDER BY m."createdAt" ASC`,
-      [organizationId],
-    );
-
+    const rows = await this.orgRepo.getMembers(organizationId);
     return rows.map((row) => ({
       id: row.id,
       userId: row.userId,
@@ -378,54 +273,20 @@ export class AdminOrganizationsService {
       throw new ForbiddenException('Role not allowed');
     }
 
-    const organization = await this.db.queryOne<{ id: string; name: string; slug: string }>(
-      'SELECT id, name, slug FROM organization WHERE id = $1',
-      [organizationId],
-    );
-    if (!organization) {
-      throw new NotFoundException('Organization not found');
-    }
+    const organization = await this.orgRepo.findBasicById(organizationId);
+    if (!organization) throw new NotFoundException('Organization not found');
 
-    const existingMember = await this.db.queryOne<{ id: string }>(
-      `SELECT m.id
-       FROM member m
-       JOIN "user" u ON u.id = m."userId"
-       WHERE m."organizationId" = $1 AND LOWER(u.email) = LOWER($2)`,
-      [organizationId, normalizedEmail],
-    );
-    if (existingMember) {
-      throw new BadRequestException('User is already a member of this organization');
-    }
+    const existingMember = await this.orgRepo.findMemberByEmail(organizationId, normalizedEmail);
+    if (existingMember) throw new BadRequestException('User is already a member of this organization');
 
-    const existingInvitation = await this.db.queryOne<{ id: string }>(
-      'SELECT id FROM invitation WHERE "organizationId" = $1 AND LOWER(email) = LOWER($2) AND status = $3',
-      [organizationId, normalizedEmail, 'pending'],
-    );
-    if (existingInvitation) {
-      throw new ConflictException('Invitation already exists for this user');
-    }
+    const existingInvitation = await this.orgRepo.findPendingInvitation(organizationId, normalizedEmail);
+    if (existingInvitation) throw new ConflictException('Invitation already exists for this user');
 
     const invitationId = this.generateId();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    await this.db.query(
-      `INSERT INTO invitation (id, "organizationId", email, role, status, "expiresAt", "inviterId", "createdAt")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-      [invitationId, organizationId, normalizedEmail, role, 'pending', expiresAt, inviter.id],
-    );
-
-    const invitation = await this.db.queryOne<{
-      id: string;
-      organizationId: string;
-      email: string;
-      role: string;
-      status: string;
-      expiresAt: Date;
-      inviterId: string;
-      createdAt: Date;
-    }>(
-      'SELECT id, "organizationId" as "organizationId", email, role, status, "expiresAt" as "expiresAt", "inviterId" as "inviterId", "createdAt" as "createdAt" FROM invitation WHERE id = $1',
-      [invitationId],
+    const invitation = await this.orgRepo.createInvitation(
+      invitationId, organizationId, normalizedEmail, role, expiresAt, inviter.id,
     );
 
     if (!invitation) {
@@ -470,41 +331,17 @@ export class AdminOrganizationsService {
     expiresAt: Date;
     createdAt: Date;
   }>> {
-    const rows = await this.db.query<{
-      id: string;
-      email: string;
-      role: string;
-      status: string;
-      expiresAt: Date;
-      createdAt: Date;
-    }>(
-      `SELECT id, email, role, status, "expiresAt", "createdAt"
-       FROM invitation
-       WHERE "organizationId" = $1
-       ORDER BY "createdAt" DESC`,
-      [organizationId],
-    );
-
-    return rows;
+    return this.orgRepo.getInvitations(organizationId);
   }
 
   /**
    * Delete an invitation
    */
   async deleteInvitation(organizationId: string, invitationId: string): Promise<void> {
-    const result = await this.db.query(
-      `DELETE FROM invitation WHERE id = $1 AND "organizationId" = $2 RETURNING id`,
-      [invitationId, organizationId],
-    );
-
-    if (result.length === 0) {
-      const existing = await this.db.queryOne<{ id: string }>(
-        `SELECT id FROM invitation WHERE id = $1`,
-        [invitationId],
-      );
-      if (!existing) {
-        throw new Error('Invitation not found');
-      }
+    const deleted = await this.orgRepo.deleteInvitation(invitationId, organizationId);
+    if (!deleted) {
+      const exists = await this.orgRepo.findInvitationById(invitationId);
+      if (!exists) throw new NotFoundException('Invitation not found');
     }
   }
 
@@ -515,50 +352,15 @@ export class AdminOrganizationsService {
     organizationId: string,
     userId: string,
     role: string,
-  ): Promise<{
-    id: string;
-    organizationId: string;
-    userId: string;
-    role: string;
-    createdAt: Date;
-  }> {
-    const user = await this.db.queryOne<{ id: string }>(
-      `SELECT id FROM "user" WHERE id = $1`,
-      [userId],
-    );
-    if (!user) {
-      throw new Error('User not found');
-    }
+  ): Promise<{ id: string; organizationId: string; userId: string; role: string; createdAt: Date }> {
+    const user = await this.orgRepo.findUserById(userId);
+    if (!user) throw new NotFoundException('User not found');
 
-    const existingMember = await this.db.queryOne<{ id: string }>(
-      `SELECT id FROM member WHERE "userId" = $1 AND "organizationId" = $2`,
-      [userId, organizationId],
-    );
-    if (existingMember) {
-      throw new Error('User is already a member of this organization');
-    }
+    const existingMember = await this.orgRepo.findMemberByUserId(userId, organizationId);
+    if (existingMember) throw new ConflictException('User is already a member of this organization');
 
     const memberId = this.generateId();
-
-    await this.db.query(
-      `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [memberId, organizationId, userId, role],
-    );
-
-    const member = await this.db.queryOne<{
-      id: string;
-      organizationId: string;
-      userId: string;
-      role: string;
-      createdAt: Date;
-    }>(
-      `SELECT id, "organizationId", "userId", role, "createdAt"
-       FROM member WHERE id = $1`,
-      [memberId],
-    );
-
-    return member!;
+    return this.orgRepo.addMember(memberId, organizationId, userId, role);
   }
 
   async updateMemberRole(
@@ -578,47 +380,20 @@ export class AdminOrganizationsService {
       throw new ForbiddenException('Role not allowed');
     }
 
-    const member = await this.db.queryOne<{ id: string; role: string; userId: string }>(
-      'SELECT id, role, "userId" as "userId" FROM member WHERE id = $1 AND "organizationId" = $2',
-      [memberId, organizationId],
-    );
-
-    if (!member) {
-      throw new NotFoundException('Member not found');
-    }
+    const member = await this.orgRepo.findMemberById(memberId, organizationId);
+    if (!member) throw new NotFoundException('Member not found');
 
     if (platformRole === 'manager' && member.role !== 'member') {
       throw new ForbiddenException('Managers can only change member roles');
     }
 
     if (member.role === 'admin' && newRole !== 'admin') {
-      const adminCount = await this.db.queryOne<{ count: string }>(
-        'SELECT COUNT(*)::text as count FROM member WHERE "organizationId" = $1 AND role = $2',
-        [organizationId, 'admin'],
-      );
-
-      if ((adminCount ? parseInt(adminCount.count, 10) : 0) <= 1) {
-        throw new ForbiddenException('Cannot change role of the last organization admin');
-      }
+      const adminCount = await this.orgRepo.countAdmins(organizationId);
+      if (adminCount <= 1) throw new ForbiddenException('Cannot change role of the last organization admin');
     }
 
-    await this.db.query(
-      'UPDATE member SET role = $1 WHERE id = $2 AND "organizationId" = $3',
-      [newRole, memberId, organizationId],
-    );
-
-    const updated = await this.db.queryOne<{
-      id: string;
-      organizationId: string;
-      userId: string;
-      role: string;
-      createdAt: Date;
-    }>(
-      'SELECT id, "organizationId" as "organizationId", "userId" as "userId", role, "createdAt" as "createdAt" FROM member WHERE id = $1 AND "organizationId" = $2',
-      [memberId, organizationId],
-    );
-
-    return updated!;
+    const updated = await this.orgRepo.updateMemberRole(memberId, organizationId, newRole);
+    return updated!
   }
 
   async removeMember(
@@ -626,38 +401,20 @@ export class AdminOrganizationsService {
     memberId: string,
     platformRole: 'admin' | 'manager',
   ): Promise<{ success: true }> {
-    const member = await this.db.queryOne<{ id: string; role: string; userId: string }>(
-      'SELECT id, role, "userId" as "userId" FROM member WHERE id = $1 AND "organizationId" = $2',
-      [memberId, organizationId],
-    );
-
-    if (!member) {
-      throw new NotFoundException('Member not found');
-    }
+    const member = await this.orgRepo.findMemberById(memberId, organizationId);
+    if (!member) throw new NotFoundException('Member not found');
 
     if (platformRole === 'manager' && member.role !== 'member') {
       throw new ForbiddenException('Managers can only remove members');
     }
 
     if (member.role === 'admin') {
-      const adminCount = await this.db.queryOne<{ count: string }>(
-        'SELECT COUNT(*)::text as count FROM member WHERE "organizationId" = $1 AND role = $2',
-        [organizationId, 'admin'],
-      );
-
-      if ((adminCount ? parseInt(adminCount.count, 10) : 0) <= 1) {
-        throw new ForbiddenException('Cannot remove the last organization admin');
-      }
+      const adminCount = await this.orgRepo.countAdmins(organizationId);
+      if (adminCount <= 1) throw new ForbiddenException('Cannot remove the last organization admin');
     }
 
-    const result = await this.db.query<{ id: string }>(
-      'DELETE FROM member WHERE id = $1 AND "organizationId" = $2 RETURNING id',
-      [memberId, organizationId],
-    );
-
-    if (result.length === 0) {
-      throw new NotFoundException('Member not found');
-    }
+    const removed = await this.orgRepo.removeMember(memberId, organizationId);
+    if (!removed) throw new NotFoundException('Member not found');
 
     return { success: true };
   }
