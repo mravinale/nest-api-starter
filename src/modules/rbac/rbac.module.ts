@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RbacController } from './api/controllers/rbac.controller';
 import { RoleService, PermissionService } from './application/services';
@@ -11,8 +11,11 @@ import { TypeOrmRoleRepository } from './infrastructure/persistence/repositories
 import { TypeOrmPermissionRepository } from './infrastructure/persistence/repositories/permission.typeorm-repository';
 
 /**
- * RBAC Module for role-based access control
+ * RBAC Module for role-based access control.
+ * Marked @Global() so RoleService and PermissionService are available
+ * across the app (e.g., PermissionsGuard in SharedModule).
  */
+@Global()
 @Module({
   imports: [TypeOrmModule.forFeature([RoleTypeOrmEntity, PermissionTypeOrmEntity])],
   controllers: [RbacController],

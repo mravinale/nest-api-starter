@@ -1,5 +1,4 @@
 import { Global, Module } from '@nestjs/common';
-import { RbacModule } from '../modules/rbac';
 import { RolesGuard } from './guards/roles.guard';
 import { OrgRoleGuard } from './guards/org-role.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
@@ -11,7 +10,6 @@ import { PermissionsGuard } from './guards/permissions.guard';
  */
 @Global()
 @Module({
-  imports: [RbacModule],
   providers: [RolesGuard, OrgRoleGuard, PermissionsGuard],
   exports: [RolesGuard, OrgRoleGuard, PermissionsGuard],
 })
