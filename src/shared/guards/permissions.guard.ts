@@ -5,8 +5,8 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
-import { RoleService } from '../../modules/rbac/application/services';
+import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
+import { RoleService } from '../../modules/admin/rbac/application/services';
 
 /**
  * Guard that checks if the authenticated user has the required permissions.

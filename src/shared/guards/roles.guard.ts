@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY } from '../../common/decorators/roles.decorator';
+import { ROLES_KEY } from '../decorators/roles.decorator';
 
 /**
  * Guard that checks if the authenticated user has the required platform role.

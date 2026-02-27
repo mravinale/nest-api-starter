@@ -2,7 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
 import { AllowAnonymous, Session } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
-import { PASSWORD_POLICY } from './common/password-policy';
+import { PASSWORD_POLICY } from './shared/utils/password-policy';
 
 @Controller()
 export class AppController {

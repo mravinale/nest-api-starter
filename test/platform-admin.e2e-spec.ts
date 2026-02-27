@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
-import { DatabaseService } from '../src/database';
+import { DatabaseService } from '../src/shared/infrastructure/database/database.module';
 
 /**
  * E2E tests for Platform Admin endpoints.

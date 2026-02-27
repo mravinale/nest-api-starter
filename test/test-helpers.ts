@@ -1,9 +1,9 @@
 import { INestApplication } from '@nestjs/common';
-import { DatabaseService } from '../src/database';
+import { DatabaseService } from '../src/shared/infrastructure/database/database.module';
 import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { uniqueResendDeliveredEmail } from '../src/common/resend-test-email';
+import { uniqueResendDeliveredEmail } from '../src/shared/utils/resend-test-email';
 
 export interface TestUser {
   id: string;

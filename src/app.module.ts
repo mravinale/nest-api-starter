@@ -4,15 +4,12 @@ import { AppService } from './app.service';
 
 import { AuthModule } from '@thallesp/nestjs-better-auth';
 import { auth, setEmailService } from './auth';
-import { ConfigModule, ConfigService } from './config';
-import { EmailModule, EmailService } from './email';
-import { DatabaseModule } from './database';
+import { ConfigModule, ConfigService } from './shared/config';
+import { EmailModule, EmailService } from './shared/email';
+import { DatabaseModule } from './shared/infrastructure/database/database.module';
 import { AppTypeOrmModule } from './shared/infrastructure/database/typeorm.module';
 import { SharedModule } from './shared/shared.module';
-import { RbacModule } from './modules/rbac';
-import { PlatformAdminModule } from './modules/platform-admin';
-import { OrganizationModule } from './modules/organization';
-import { AdminModule } from './modules/admin';
+import { AdminModule, RbacModule } from './modules/admin';
 
 @Module({
   imports: [
@@ -22,8 +19,6 @@ import { AdminModule } from './modules/admin';
     AppTypeOrmModule,
     SharedModule,
     RbacModule,
-    PlatformAdminModule,
-    OrganizationModule,
     AdminModule,
     AuthModule.forRoot({ auth }),
   ],
