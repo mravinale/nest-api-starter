@@ -11,7 +11,7 @@ jest.mock('../../utils/verification.utils', () => ({
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AdminService, CreateUserInput } from './admin.service';
 import {
   ADMIN_USER_REPOSITORY,
@@ -193,14 +193,13 @@ describe('AdminService', () => {
       );
     });
 
-    it('should throw ForbiddenException for admin role change when no org can be resolved', async () => {
+    it('should throw BadRequestException for non-admin role change when no org can be resolved', async () => {
       userRepo.findUserRole.mockResolvedValueOnce('manager');
       userRepo.findUserOrganization.mockResolvedValueOnce(null);
-      userRepo.setUserRole.mockRejectedValueOnce(new ForbiddenException('Active organization required'));
 
       await expect(
         service.setUserRole({ userId: 'target-1', role: 'member' }, 'admin', null, 'actor-admin'),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should allow self-update', async () => {

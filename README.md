@@ -369,7 +369,7 @@ npx playwright test --headed --workers=1
 
 When test-recipient guardrail is active (default in test contexts), email recipients must use Resend test addresses such as `delivered@resend.dev` or `delivered+label@resend.dev`.
 
-**Unit Tests (433 tests, 29 suites):**
+**Unit Tests (409 tests, 25 suites):**
 - Admin users: CRUD, roles, banning, password management
 - Admin sessions: list, revoke, revoke-all
 - Admin organizations: CRUD, members, invitations, impersonation

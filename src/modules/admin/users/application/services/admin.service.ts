@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { hashPassword } from 'better-auth/crypto';
 import { EmailService } from '../../../../../shared/email/email.service';
@@ -173,6 +173,10 @@ export class AdminService {
             platformRole,
             activeOrganizationId,
           })) ?? undefined;
+
+    if (input.role !== 'admin' && !organizationIdForRole) {
+      throw new BadRequestException('Organization is required for non-admin role assignments');
+    }
 
     return this.userRepo.setUserRole({
       userId: input.userId,

@@ -74,8 +74,8 @@ export interface CreateOrgParams {
 export interface UpdateOrgFields {
   name?: string;
   slug?: string;
-  logo?: string;
-  metadataJson?: string;
+  logo?: string | null;
+  metadataJson?: string | null;
 }
 
 export const ADMIN_ORG_REPOSITORY = 'ADMIN_ORG_REPOSITORY';

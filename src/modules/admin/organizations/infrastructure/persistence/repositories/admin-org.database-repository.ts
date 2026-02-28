@@ -255,7 +255,8 @@ export class AdminOrgDatabaseRepository implements IAdminOrgRepository {
       'SELECT id, "organizationId" as "organizationId", email, role, status, "expiresAt" as "expiresAt", "inviterId" as "inviterId", "createdAt" as "createdAt" FROM invitation WHERE id = $1',
       [id],
     );
-    return invitation!;
+    if (!invitation) throw new InternalServerErrorException(`Failed to retrieve invitation ${id} after insert into organization ${organizationId}`);
+    return invitation;
   }
 
   async getInvitations(organizationId: string): Promise<InvitationRow[]> {

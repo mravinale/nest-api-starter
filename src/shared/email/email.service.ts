@@ -23,28 +23,37 @@ export class EmailService {
     }
   }
 
+  private maskEmail(email: string): string {
+    const [local, domain] = email.split('@');
+    if (!domain) return '<invalid>';
+    const maskedLocal = local.length > 2 ? local[0] + '***' : '***';
+    return `${maskedLocal}@${domain}`;
+  }
+
   async sendEmail({ to, subject, html, text }: EmailPayload): Promise<void> {
-    console.log('📧 [EmailService] sendEmail called:', { to, subject, isTestMode: this.configService.isTestMode(), hasResendClient: !!this.resendClient });
+    const isTestMode = this.configService.isTestMode();
+    const maskedTo = isTestMode ? to : this.maskEmail(to);
+    console.log('📧 [EmailService] sendEmail called:', { to: maskedTo, subject, isTestMode, hasResendClient: !!this.resendClient });
 
     if (this.configService.shouldEnforceResendTestRecipients() && !isResendTestEmail(to)) {
-      console.error('❌ [EmailService] Non-Resend recipient blocked by test guardrail:', { to, subject });
+      console.error('❌ [EmailService] Non-Resend recipient blocked by test guardrail:', { to: maskedTo, subject });
       throw new Error(
         'Resend test address required while ENFORCE_RESEND_TEST_RECIPIENTS is enabled. Use delivered@resend.dev or delivered+label@resend.dev.',
       );
     }
     
     if (this.configService.isTestMode()) {
-      console.log('⚠️ [TEST MODE] Email skipped:', { to, subject });
+      console.log('⚠️ [TEST MODE] Email skipped:', { to: maskedTo, subject });
       return;
     }
 
     if (!this.resendClient) {
-      console.log('⚠️ [NO API KEY] Email logged only:', { to, subject });
+      console.log('⚠️ [NO API KEY] Email logged only:', { to: maskedTo, subject });
       return;
     }
 
     try {
-      console.log('📤 [EmailService] Sending email via Resend:', { to, subject, from: this.configService.getFromEmail() });
+      console.log('📤 [EmailService] Sending email via Resend:', { to: maskedTo, subject, from: this.configService.getFromEmail() });
       const { data, error } = await this.resendClient.emails.send({
         from: this.configService.getFromEmail(),
         to,
