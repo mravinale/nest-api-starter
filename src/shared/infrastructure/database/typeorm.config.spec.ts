@@ -25,6 +25,18 @@ describe('parseDatabaseUrl', () => {
     });
   });
 
+  it('should handle malformed percent sequences gracefully', () => {
+    const result = parseDatabaseUrl('postgresql://user:%k@host:5432/db');
+    expect(result).toEqual({
+      host: 'host',
+      port: 5432,
+      username: 'user',
+      password: '%k', // falls back to raw value since %k is invalid percent-encoding
+      database: 'db',
+      ssl: undefined,
+    });
+  });
+
   it('should default port to 5432 when not specified', () => {
     const result = parseDatabaseUrl('postgresql://user:pass@host/db');
     expect(result.port).toBe(5432);
