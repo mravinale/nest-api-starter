@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-      - test
 
 env:
   AWS_REGION: us-east-1
@@ -39,21 +38,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Select deployment targets by branch
-        run: |
-          if [ "${GITHUB_REF_NAME}" = "master" ]; then
-            echo "ECR_REPOSITORY=tierone/nestjs-api-starter" >> "$GITHUB_ENV"
-            echo "EB_APPLICATION=nextjs-api-starter" >> "$GITHUB_ENV"
-            echo "EB_ENVIRONMENT=nextjs-api-starter" >> "$GITHUB_ENV"
-          elif [ "${GITHUB_REF_NAME}" = "test" ]; then
-            echo "ECR_REPOSITORY=tierone/nestjs-api-starter-test" >> "$GITHUB_ENV"
-            echo "EB_APPLICATION=nextjs-api-starter" >> "$GITHUB_ENV"
-            echo "EB_ENVIRONMENT=nextjs-api-starter-test" >> "$GITHUB_ENV"
-          else
-            echo "Unsupported deploy branch: ${GITHUB_REF_NAME}"
-            exit 1
-          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
