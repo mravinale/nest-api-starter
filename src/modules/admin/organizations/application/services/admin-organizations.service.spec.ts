@@ -749,6 +749,14 @@ describe('Role Hierarchy Utilities', () => {
       expect(filterAssignableRoles(allRoles, 'owner')).toEqual(['member']);
     });
 
+    it('should ignore unknown role names from input', () => {
+      expect(filterAssignableRoles(['super-admin', 'admin', 'manager', 'member'], 'admin')).toEqual([
+        'admin',
+        'manager',
+        'member',
+      ]);
+    });
+
     it('unknown role should only assign member-level roles', () => {
       expect(filterAssignableRoles(allRoles, 'unknown')).toEqual(['member']);
     });
