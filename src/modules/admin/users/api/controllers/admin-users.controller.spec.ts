@@ -218,6 +218,14 @@ describe('AdminUsersController', () => {
       session: { activeOrganizationId: 'org-1' },
     } as any;
 
+    it('calls getCreateUserMetadata with manager role and activeOrgId', async () => {
+      adminService.getCreateUserMetadata.mockResolvedValue({ roles: [], allowedRoles: [] } as never);
+
+      await controller.getCreateMetadata(managerSession);
+
+      expect(adminService.getCreateUserMetadata).toHaveBeenCalledWith('manager', 'org-1');
+    });
+
     it('passes activeOrgId for manager on update', async () => {
       adminService.updateUser.mockResolvedValue({ id: 'target-1' } as never);
 

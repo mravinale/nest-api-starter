@@ -1,35 +1,31 @@
-import { jest } from '@jest/globals';
-
-jest.mock('jose', () => ({
-  SignJWT: jest.fn().mockImplementation(() => ({
-    setProtectedHeader: jest.fn().mockReturnThis(),
-    setIssuedAt: jest.fn().mockReturnThis(),
-    setExpirationTime: jest.fn().mockReturnThis(),
-    sign: jest.fn(async () => 'mock.jwt.token'),
-  })),
-}));
-
+import { decodeJwt } from 'jose';
 import { buildVerificationToken, buildVerificationUrl } from './verification.utils';
 
 describe('verification.utils', () => {
   describe('buildVerificationToken', () => {
-    it('should return a signed JWT string', async () => {
+    it('should return a valid HS256 JWT string (three dot-separated segments)', async () => {
       const token = await buildVerificationToken('user@example.com', 'secret', 3600);
-      expect(token).toBe('mock.jwt.token');
+      expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     });
 
-    it('should lowercase the email before signing', async () => {
-      const { SignJWT } = await import('jose');
-      await buildVerificationToken('USER@Example.COM', 'secret');
-      expect(SignJWT).toHaveBeenCalledWith({ email: 'user@example.com' });
+    it('should lowercase the email in the token payload', async () => {
+      const token = await buildVerificationToken('USER@Example.COM', 'secret');
+      const payload = decodeJwt(token);
+      expect(payload.email).toBe('user@example.com');
+    });
+
+    it('should use provided expiresInSeconds in the expiry claim', async () => {
+      const token = await buildVerificationToken('a@b.com', 'secret', 7200);
+      const payload = decodeJwt(token);
+      const delta = (payload.exp as number) - (payload.iat as number);
+      expect(delta).toBe(7200);
     });
 
     it('should default expiresInSeconds to 3600', async () => {
-      const { SignJWT } = await import('jose');
-      const instance = { setProtectedHeader: jest.fn().mockReturnThis(), setIssuedAt: jest.fn().mockReturnThis(), setExpirationTime: jest.fn().mockReturnThis(), sign: jest.fn(async () => 'tok') };
-      (SignJWT as unknown as jest.Mock).mockImplementationOnce(() => instance);
-      await buildVerificationToken('a@b.com', 'secret');
-      expect(instance.setExpirationTime).toHaveBeenCalledWith('3600s');
+      const token = await buildVerificationToken('a@b.com', 'secret');
+      const payload = decodeJwt(token);
+      const delta = (payload.exp as number) - (payload.iat as number);
+      expect(delta).toBe(3600);
     });
   });
 

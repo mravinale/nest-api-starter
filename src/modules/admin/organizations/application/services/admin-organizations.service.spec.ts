@@ -157,6 +157,54 @@ describe('AdminOrganizationsService', () => {
         ),
       ).rejects.toBeInstanceOf(ConflictException);
     });
+
+    it('should throw BadRequestException when name is empty', async () => {
+      await expect(
+        service.create({ name: '  ', slug: 'valid-slug' }, { id: 'admin-1', platformRole: 'admin' }),
+      ).rejects.toThrow('name is required');
+    });
+
+    it('should throw BadRequestException when slug is empty', async () => {
+      await expect(
+        service.create({ name: 'Valid Name', slug: '  ' }, { id: 'admin-1', platformRole: 'admin' }),
+      ).rejects.toThrow('slug is required');
+    });
+
+    it('should throw BadRequestException when slug has special characters', async () => {
+      await expect(
+        service.create({ name: 'Valid Name', slug: 'has_underscore!' }, { id: 'admin-1', platformRole: 'admin' }),
+      ).rejects.toThrow('invalid slug');
+    });
+
+    it('should throw BadRequestException for slug with spaces', async () => {
+      await expect(
+        service.create({ name: 'Valid Name', slug: 'has space' }, { id: 'admin-1', platformRole: 'admin' }),
+      ).rejects.toThrow('invalid slug');
+    });
+
+    it('should throw InternalServerErrorException when findById returns null after createOrg', async () => {
+      orgRepo.createOrg.mockResolvedValue(undefined);
+      orgRepo.findById.mockResolvedValue(null);
+
+      await expect(
+        service.create({ name: 'Ghost Org', slug: 'ghost-org' }, { id: 'admin-1', platformRole: 'admin' }),
+      ).rejects.toThrow('Failed to create organization');
+    });
+
+    it('should assign admin member role when actor is admin', async () => {
+      orgRepo.createOrg.mockResolvedValue(undefined);
+      orgRepo.findById.mockResolvedValue({ id: 'org-3', name: 'Admin Org', slug: 'admin-org', logo: null, metadata: null, created_at: new Date(), member_count: '0' });
+
+      const created = await service.create(
+        { name: 'Admin Org', slug: 'admin-org' },
+        { id: 'admin-1', platformRole: 'admin' },
+      );
+
+      expect(created.name).toBe('Admin Org');
+      expect(orgRepo.createOrg).toHaveBeenCalledWith(
+        expect.objectContaining({ actorRole: 'admin' }),
+      );
+    });
   });
 
   describe('createInvitation', () => {
@@ -259,6 +307,131 @@ describe('AdminOrganizationsService', () => {
         ),
       ).rejects.toBeInstanceOf(ConflictException);
     });
+
+    it('should throw InternalServerErrorException when repo returns null invitation', async () => {
+      orgRepo.findBasicById.mockResolvedValue({ id: 'org-1', name: 'Test Org', slug: 'test-org' });
+      orgRepo.findMemberByEmail.mockResolvedValue(null);
+      orgRepo.findPendingInvitation.mockResolvedValue(null);
+      orgRepo.createInvitation.mockResolvedValue(null);
+
+      await expect(
+        service.createInvitation(
+          'org-1',
+          'invitee@example.com',
+          'member',
+          'admin',
+          { id: 'actor-1', email: 'admin@example.com' },
+        ),
+      ).rejects.toThrow('Failed to create invitation');
+    });
+
+    it('should swallow email send errors and still return invitation', async () => {
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      orgRepo.findBasicById.mockResolvedValue({ id: 'org-1', name: 'Test Org', slug: 'test-org' });
+      orgRepo.findMemberByEmail.mockResolvedValue(null);
+      orgRepo.findPendingInvitation.mockResolvedValue(null);
+      orgRepo.createInvitation.mockResolvedValue({
+        id: 'inv-2',
+        organizationId: 'org-1',
+        email: 'invitee@example.com',
+        role: 'member',
+        status: 'pending',
+        expiresAt,
+        inviterId: 'actor-1',
+        createdAt: new Date(),
+      });
+      emailService.sendOrganizationInvitation.mockRejectedValue(new Error('SMTP timeout'));
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = await service.createInvitation(
+        'org-1',
+        'invitee@example.com',
+        'member',
+        'admin',
+        { id: 'actor-1', email: 'admin@example.com', name: 'Admin' },
+      );
+
+      expect(result.id).toBe('inv-2');
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to send organization invitation email'),
+        expect.any(Error),
+      );
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('getInvitations', () => {
+    it('should return invitations for an organization', async () => {
+      const mockInvitations = [
+        {
+          id: 'inv-1',
+          organizationId: 'org-1',
+          email: 'a@example.com',
+          role: 'member',
+          status: 'pending',
+          expiresAt: new Date(),
+          inviterId: 'actor-1',
+          createdAt: new Date(),
+        },
+      ];
+      orgRepo.getInvitations.mockResolvedValue(mockInvitations);
+
+      const result = await service.getInvitations('org-1');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].email).toBe('a@example.com');
+      expect(orgRepo.getInvitations).toHaveBeenCalledWith('org-1');
+    });
+
+    it('should return empty array when no invitations exist', async () => {
+      orgRepo.getInvitations.mockResolvedValue([]);
+
+      const result = await service.getInvitations('org-1');
+
+      expect(result).toHaveLength(0);
+    });
+  });
+
+  describe('addMember', () => {
+    const mockMemberResult = {
+      id: 'member-new',
+      organizationId: 'org-1',
+      userId: 'user-2',
+      role: 'member',
+      createdAt: new Date(),
+    };
+
+    it('should add an existing user as a member', async () => {
+      orgRepo.findUserById.mockResolvedValue({ id: 'user-2' });
+      orgRepo.findMemberByUserId.mockResolvedValue(null);
+      orgRepo.addMember.mockResolvedValue(mockMemberResult);
+
+      const result = await service.addMember('org-1', 'user-2', 'member');
+
+      expect(result.userId).toBe('user-2');
+      expect(result.role).toBe('member');
+      expect(orgRepo.addMember).toHaveBeenCalledWith(
+        expect.any(String),
+        'org-1',
+        'user-2',
+        'member',
+      );
+    });
+
+    it('should throw NotFoundException when user does not exist', async () => {
+      orgRepo.findUserById.mockResolvedValue(null);
+
+      await expect(service.addMember('org-1', 'ghost-user', 'member')).rejects.toThrow('User not found');
+    });
+
+    it('should throw ConflictException when user is already a member', async () => {
+      orgRepo.findUserById.mockResolvedValue({ id: 'user-2' });
+      orgRepo.findMemberByUserId.mockResolvedValue({ id: 'existing-member' });
+
+      await expect(service.addMember('org-1', 'user-2', 'member')).rejects.toThrow(
+        'User is already a member of this organization',
+      );
+    });
   });
 
   describe('findById', () => {
@@ -360,6 +533,12 @@ describe('AdminOrganizationsService', () => {
 
       expect(result.role).toBe('manager');
       expect(orgRepo.updateMemberRole).toHaveBeenCalledWith('member-1', 'org-1', 'manager');
+    });
+
+    it('should block manager from assigning admin role (role not in allowedRoleNames)', async () => {
+      await expect(service.updateMemberRole('org-1', 'member-1', 'admin', 'manager')).rejects.toThrow(
+        'Role not allowed',
+      );
     });
 
     it('should block manager from changing another manager role', async () => {
