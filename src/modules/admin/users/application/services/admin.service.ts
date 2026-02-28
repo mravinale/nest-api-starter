@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { hashPassword } from 'better-auth/crypto';
 import { EmailService } from '../../../../../shared/email/email.service';
@@ -16,6 +16,8 @@ import {
   type IAdminUserRepository,
   ADMIN_USER_REPOSITORY,
 } from '../../domain/repositories/admin-user.repository.interface';
+
+const logger = new Logger('AdminService');
 
 export type CreateUserInput = {
   name: string;
@@ -288,8 +290,8 @@ export class AdminService {
       }
     }
 
-    await this.userRepo.removeUsers(input.userIds);
-    return { success: true, deletedCount: input.userIds.length };
+    const deletedCount = await this.userRepo.removeUsers(input.userIds);
+    return { success: true, deletedCount };
   }
 
   async listUsers(params: {
@@ -426,15 +428,15 @@ export class AdminService {
         this.configService.getFeUrl(),
       );
 
-      console.log('📧 [AdminService] Sending verification email to:', input.email);
+      logger.log(`Sending verification email to userId: ${userId}`);
       await this.emailService.sendEmailVerification({
         user: { id: userId, email: input.email, name: input.name },
         url: verificationUrl,
         token: verificationToken,
       });
-      console.log('✅ [AdminService] Verification email sent successfully');
+      logger.log(`Verification email sent successfully for userId: ${userId}`);
     } catch (error) {
-      console.error('❌ [AdminService] Failed to send verification email:', error);
+      logger.error(`Failed to send verification email for userId: ${userId}`, error);
     }
 
     return created;

@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { AdminOrgDatabaseRepository } from './admin-org.database-repository';
 
 const mockQuery = jest.fn<any>();
@@ -105,17 +105,25 @@ describe('AdminOrgDatabaseRepository', () => {
       memberId: 'mem-1',
     };
 
-    it('throws ConflictException when slug already exists', async () => {
-      mockQuery.mockResolvedValueOnce([{ id: 'existing' }]);
+    it('throws ConflictException when INSERT hits a unique constraint violation (23505)', async () => {
+      const pgUniqueError = Object.assign(new Error('duplicate key'), { code: '23505' });
+      mockQuery.mockRejectedValueOnce(pgUniqueError);
       await expect(repo.createOrg(params)).rejects.toThrow(ConflictException);
     });
 
-    it('inserts org and member when slug is free', async () => {
-      mockQuery.mockResolvedValueOnce([]);
+    it('rethrows unrelated DB errors without wrapping', async () => {
+      const dbError = Object.assign(new Error('connection lost'), { code: '08006' });
+      mockQuery.mockRejectedValueOnce(dbError);
+      await expect(repo.createOrg(params)).rejects.toThrow('connection lost');
+    });
+
+    it('inserts org and member without a prior SELECT when slug is free', async () => {
       mockQuery.mockResolvedValueOnce(undefined);
       mockQuery.mockResolvedValueOnce(undefined);
       await expect(repo.createOrg(params)).resolves.toBeUndefined();
-      expect(mockQuery).toHaveBeenCalledTimes(3);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      const [firstSql] = mockQuery.mock.calls[0] as [string];
+      expect(firstSql).toContain('INSERT INTO organization');
     });
   });
 
@@ -213,6 +221,12 @@ describe('AdminOrgDatabaseRepository', () => {
       mockQueryOne.mockResolvedValue(member);
       const result = await repo.addMember('mem-2', 'org-1', 'u-2', 'member');
       expect(result).toEqual(member);
+    });
+
+    it('throws InternalServerErrorException when SELECT after INSERT returns null', async () => {
+      mockQuery.mockResolvedValueOnce(undefined);
+      mockQueryOne.mockResolvedValue(null);
+      await expect(repo.addMember('mem-x', 'org-1', 'u-1', 'member')).rejects.toThrow(InternalServerErrorException);
     });
   });
 

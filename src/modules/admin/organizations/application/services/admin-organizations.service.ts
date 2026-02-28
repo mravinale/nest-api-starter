@@ -199,8 +199,20 @@ export class AdminOrganizationsService {
     if (!existing) return null;
 
     const updates: Record<string, unknown> = {};
-    if (dto.name !== undefined) updates.name = dto.name;
-    if (dto.slug !== undefined) updates.slug = dto.slug;
+
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException('name is required');
+      updates.name = name;
+    }
+
+    if (dto.slug !== undefined) {
+      const slug = dto.slug.trim().toLowerCase();
+      if (!slug) throw new BadRequestException('slug is required');
+      if (!this.slugRegex.test(slug)) throw new BadRequestException('invalid slug');
+      updates.slug = slug;
+    }
+
     if (dto.logo !== undefined) updates.logo = dto.logo;
     if (dto.metadata !== undefined) updates.metadataJson = JSON.stringify(dto.metadata);
 
@@ -355,6 +367,9 @@ export class AdminOrganizationsService {
     userId: string,
     role: string,
   ): Promise<{ id: string; organizationId: string; userId: string; role: string; createdAt: Date }> {
+    const org = await this.findById(organizationId);
+    if (!org) throw new NotFoundException('Organization not found');
+
     const user = await this.orgRepo.findUserById(userId);
     if (!user) throw new NotFoundException('User not found');
 
@@ -395,7 +410,8 @@ export class AdminOrganizationsService {
     }
 
     const updated = await this.orgRepo.updateMemberRole(memberId, organizationId, newRole);
-    return updated!
+    if (!updated) throw new NotFoundException(`Member ${memberId} not found in organization ${organizationId}`);
+    return updated;
   }
 
   async removeMember(

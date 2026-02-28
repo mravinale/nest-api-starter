@@ -75,7 +75,7 @@ export interface IAdminUserRepository {
   unbanUser(userId: string): Promise<void>;
   setUserPassword(userId: string, hashedPassword: string): Promise<void>;
   removeUser(userId: string): Promise<void>;
-  removeUsers(userIds: string[]): Promise<void>;
+  removeUsers(userIds: string[]): Promise<number>;
   listUsers(params: ListUsersParams): Promise<{ data: UserRow[]; total: number }>;
   createUser(params: CreateUserParams): Promise<UserRow>;
 

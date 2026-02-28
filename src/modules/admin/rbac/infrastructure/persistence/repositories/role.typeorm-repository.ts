@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { IRoleRepository } from '../../../domain/repositories/role.repository.interface';
@@ -103,7 +103,7 @@ export class TypeOrmRoleRepository implements IRoleRepository {
         where: { id: roleId },
         relations: ['permissions'],
       });
-      if (!role) return;
+      if (!role) throw new NotFoundException(`Role ${roleId} not found`);
       const permissions =
         permissionIds.length > 0
           ? await manager.findBy(PermissionTypeOrmEntity, { id: In(permissionIds) })

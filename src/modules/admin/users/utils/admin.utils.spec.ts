@@ -105,7 +105,7 @@ describe('admin.utils', () => {
       ).toThrow(ForbiddenException);
     });
 
-    it('should throw ForbiddenException for manager with null activeOrganizationId', () => {
+    it('should throw ForbiddenException for manager with undefined activeOrganizationId', () => {
       expect(() =>
         requireActiveOrganizationIdForManager('manager', {
           session: { activeOrganizationId: undefined },

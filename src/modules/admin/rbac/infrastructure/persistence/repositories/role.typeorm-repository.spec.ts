@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { NotFoundException } from '@nestjs/common';
 import { TypeOrmRoleRepository } from './role.typeorm-repository';
 
 const mockRoleFind = jest.fn<any>();
@@ -201,9 +202,9 @@ describe('TypeOrmRoleRepository', () => {
   // ─── setPermissions ──────────────────────────────────────────────────────────
 
   describe('setPermissions', () => {
-    it('returns early when role not found in transaction', async () => {
+    it('throws NotFoundException when role not found in transaction', async () => {
       mockTransactionManager.findOne.mockResolvedValue(null);
-      await repo.setPermissions('nope', ['p-1']);
+      await expect(repo.setPermissions('nope', ['p-1'])).rejects.toThrow(NotFoundException);
       expect(mockTransactionManager.save).not.toHaveBeenCalled();
     });
 

@@ -4,7 +4,7 @@ export interface OrgRawRow {
   slug: string;
   logo: string | null;
   metadata: string | null;
-  created_at: Date;
+  createdAt: Date;
 }
 
 export interface OrgWithCountRow extends OrgRawRow {

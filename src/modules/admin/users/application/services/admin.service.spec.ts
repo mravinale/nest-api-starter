@@ -376,11 +376,18 @@ describe('AdminService', () => {
   });
 
   describe('removeUsers (bulk delete)', () => {
-    it('should allow admin to bulk delete users', async () => {
-      userRepo.removeUsers.mockResolvedValueOnce(undefined);
+    it('should allow admin to bulk delete users and return actual deleted count', async () => {
+      userRepo.removeUsers.mockResolvedValueOnce(3);
       const result = await service.removeUsers({ userIds: ['user-1', 'user-2', 'user-3'] }, 'admin', null);
       expect(result.success).toBe(true);
       expect(result.deletedCount).toBe(3);
+    });
+
+    it('should reflect actual count when some ids were not found', async () => {
+      userRepo.removeUsers.mockResolvedValueOnce(2);
+      const result = await service.removeUsers({ userIds: ['user-1', 'user-2', 'ghost-id'] }, 'admin', null);
+      expect(result.success).toBe(true);
+      expect(result.deletedCount).toBe(2);
     });
 
     it('should return early for empty userIds array', async () => {
@@ -406,7 +413,7 @@ describe('AdminService', () => {
       userRepo.findMemberInOrg
         .mockResolvedValueOnce({ id: 'member-1' })
         .mockResolvedValueOnce({ id: 'member-2' });
-      userRepo.removeUsers.mockResolvedValueOnce(undefined);
+      userRepo.removeUsers.mockResolvedValueOnce(2);
       const result = await service.removeUsers({ userIds: ['user-1', 'user-2'] }, 'manager', 'org-1');
       expect(result.success).toBe(true);
       expect(result.deletedCount).toBe(2);

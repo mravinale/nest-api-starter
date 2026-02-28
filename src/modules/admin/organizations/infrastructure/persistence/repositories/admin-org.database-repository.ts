@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, InternalServerErrorException } from '@nestjs/common';
 import { DatabaseService } from '../../../../../../shared/infrastructure/database/database.module';
 import type {
   IAdminOrgRepository,
@@ -80,19 +80,18 @@ export class AdminOrgDatabaseRepository implements IAdminOrgRepository {
 
   async createOrg(params: CreateOrgParams): Promise<void> {
     await this.db.transaction(async (query) => {
-      const existing = (await query(
-        'SELECT id FROM organization WHERE LOWER(slug) = LOWER($1)',
-        [params.slug],
-      )) as Array<{ id: string }>;
-      if (existing.length > 0) {
-        throw new ConflictException('Organization slug already exists');
+      try {
+        await query(
+          `INSERT INTO organization (id, name, slug, logo, "createdAt", metadata)
+           VALUES ($1, $2, $3, $4, NOW(), $5)`,
+          [params.id, params.name, params.slug, params.logo, params.metadataJson],
+        );
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code === '23505') {
+          throw new ConflictException('Organization slug already exists');
+        }
+        throw err;
       }
-
-      await query(
-        `INSERT INTO organization (id, name, slug, logo, "createdAt", metadata)
-         VALUES ($1, $2, $3, $4, NOW(), $5)`,
-        [params.id, params.name, params.slug, params.logo, params.metadataJson],
-      );
 
       await query(
         `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
@@ -195,7 +194,8 @@ export class AdminOrgDatabaseRepository implements IAdminOrgRepository {
       'SELECT id, "organizationId", "userId", role, "createdAt" FROM member WHERE id = $1',
       [id],
     );
-    return member!;
+    if (!member) throw new InternalServerErrorException(`Failed to retrieve member ${id} after insert into organization ${organizationId}`);
+    return member;
   }
 
   async updateMemberRole(memberId: string, organizationId: string, role: string): Promise<MemberRow | null> {

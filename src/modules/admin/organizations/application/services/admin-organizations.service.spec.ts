@@ -28,7 +28,7 @@ describe('AdminOrganizationsService', () => {
     slug: 'test-org',
     logo: null,
     metadata: null,
-    created_at: new Date(),
+    createdAt: new Date(),
     member_count: '5',
   };
 
@@ -123,7 +123,7 @@ describe('AdminOrganizationsService', () => {
   describe('create', () => {
     it('should always assign admin member role to creator regardless of platform role', async () => {
       orgRepo.createOrg.mockResolvedValue(undefined);
-      orgRepo.findById.mockResolvedValue({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, created_at: new Date(), member_count: '0' });
+      orgRepo.findById.mockResolvedValue({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, createdAt: new Date(), member_count: '0' });
 
       const created = await service.create(
         {
@@ -195,7 +195,7 @@ describe('AdminOrganizationsService', () => {
 
     it('should assign admin member role when actor is admin', async () => {
       orgRepo.createOrg.mockResolvedValue(undefined);
-      orgRepo.findById.mockResolvedValue({ id: 'org-3', name: 'Admin Org', slug: 'admin-org', logo: null, metadata: null, created_at: new Date(), member_count: '0' });
+      orgRepo.findById.mockResolvedValue({ id: 'org-3', name: 'Admin Org', slug: 'admin-org', logo: null, metadata: null, createdAt: new Date(), member_count: '0' });
 
       const created = await service.create(
         { name: 'Admin Org', slug: 'admin-org' },
@@ -345,20 +345,23 @@ describe('AdminOrganizationsService', () => {
       emailService.sendOrganizationInvitation.mockRejectedValue(new Error('SMTP timeout'));
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-      const result = await service.createInvitation(
-        'org-1',
-        'invitee@example.com',
-        'member',
-        'admin',
-        { id: 'actor-1', email: 'admin@example.com', name: 'Admin' },
-      );
+      try {
+        const result = await service.createInvitation(
+          'org-1',
+          'invitee@example.com',
+          'member',
+          'admin',
+          { id: 'actor-1', email: 'admin@example.com', name: 'Admin' },
+        );
 
-      expect(result.id).toBe('inv-2');
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to send organization invitation email'),
-        expect.any(Error),
-      );
-      consoleSpy.mockRestore();
+        expect(result.id).toBe('inv-2');
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to send organization invitation email'),
+          expect.any(Error),
+        );
+      } finally {
+        consoleSpy.mockRestore();
+      }
     });
   });
 
@@ -403,7 +406,15 @@ describe('AdminOrganizationsService', () => {
       createdAt: new Date(),
     };
 
+    it('should throw NotFoundException when organization does not exist', async () => {
+      orgRepo.findById.mockResolvedValueOnce(null);
+
+      await expect(service.addMember('ghost-org', 'user-2', 'member')).rejects.toThrow('Organization not found');
+      expect(orgRepo.findUserById).not.toHaveBeenCalled();
+    });
+
     it('should add an existing user as a member', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
       orgRepo.findUserById.mockResolvedValue({ id: 'user-2' });
       orgRepo.findMemberByUserId.mockResolvedValue(null);
       orgRepo.addMember.mockResolvedValue(mockMemberResult);
@@ -421,12 +432,14 @@ describe('AdminOrganizationsService', () => {
     });
 
     it('should throw NotFoundException when user does not exist', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
       orgRepo.findUserById.mockResolvedValue(null);
 
       await expect(service.addMember('org-1', 'ghost-user', 'member')).rejects.toThrow('User not found');
     });
 
     it('should throw ConflictException when user is already a member', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
       orgRepo.findUserById.mockResolvedValue({ id: 'user-2' });
       orgRepo.findMemberByUserId.mockResolvedValue({ id: 'existing-member' });
 
@@ -484,6 +497,42 @@ describe('AdminOrganizationsService', () => {
       expect(result?.id).toBe('org-1');
       expect(orgRepo.findById).toHaveBeenCalledTimes(1);
       expect(orgRepo.updateOrg).not.toHaveBeenCalled();
+    });
+
+    it('should trim name before persisting', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
+      orgRepo.updateOrg.mockResolvedValueOnce({ ...mockOrganization, name: 'Trimmed Name' });
+
+      await service.update('org-1', { name: '  Trimmed Name  ' });
+
+      expect(orgRepo.updateOrg).toHaveBeenCalledWith('org-1', expect.objectContaining({ name: 'Trimmed Name' }));
+    });
+
+    it('should throw BadRequestException when updated name is blank', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
+
+      await expect(service.update('org-1', { name: '   ' })).rejects.toThrow(BadRequestException);
+    });
+
+    it('should lowercase and trim slug before persisting', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
+      orgRepo.updateOrg.mockResolvedValueOnce({ ...mockOrganization, slug: 'new-slug' });
+
+      await service.update('org-1', { slug: '  New-Slug  ' });
+
+      expect(orgRepo.updateOrg).toHaveBeenCalledWith('org-1', expect.objectContaining({ slug: 'new-slug' }));
+    });
+
+    it('should throw BadRequestException when updated slug is blank', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
+
+      await expect(service.update('org-1', { slug: '   ' })).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException when updated slug has invalid format', async () => {
+      orgRepo.findById.mockResolvedValueOnce(mockOrganization);
+
+      await expect(service.update('org-1', { slug: 'invalid slug!' })).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -566,6 +615,15 @@ describe('AdminOrganizationsService', () => {
       await expect(service.updateMemberRole('org-1', 'member-1', 'manager', 'admin')).rejects.toThrow(
         'Cannot change role of the last organization admin',
       );
+    });
+
+    it('should throw NotFoundException when updateMemberRole returns null', async () => {
+      orgRepo.findMemberById.mockResolvedValue({ id: 'member-1', role: 'member', userId: 'user-1' });
+      orgRepo.updateMemberRole.mockResolvedValue(null);
+
+      await expect(
+        service.updateMemberRole('org-1', 'member-1', 'manager', 'admin'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 

@@ -1,6 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Unique } from 'typeorm';
 
 @Entity('permissions')
+@Unique(['resource', 'action'])
 export class PermissionTypeOrmEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

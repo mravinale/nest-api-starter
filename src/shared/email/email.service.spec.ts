@@ -205,7 +205,7 @@ describe('EmailService', () => {
 
     it('throws when Resend API returns error object', async () => {
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-      jest.spyOn(console, 'log').mockImplementation(() => {});
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
       const configService = createConfigServiceMock({
         getResendApiKey: jest.fn(() => 'real-api-key'),
         isTestMode: jest.fn(() => false),
@@ -225,11 +225,12 @@ describe('EmailService', () => {
         expect.objectContaining({ message: 'rate limited' }),
       );
       consoleSpy.mockRestore();
+      logSpy.mockRestore();
     });
 
     it('re-throws when Resend client throws an exception', async () => {
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-      jest.spyOn(console, 'log').mockImplementation(() => {});
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
       const configService = createConfigServiceMock({
         getResendApiKey: jest.fn(() => 'real-api-key'),
         isTestMode: jest.fn(() => false),
@@ -249,6 +250,7 @@ describe('EmailService', () => {
         expect.any(Error),
       );
       consoleSpy.mockRestore();
+      logSpy.mockRestore();
     });
   });
 

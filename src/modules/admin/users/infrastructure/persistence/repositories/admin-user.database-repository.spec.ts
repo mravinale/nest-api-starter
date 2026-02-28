@@ -12,7 +12,7 @@ describe('AdminUserDatabaseRepository', () => {
   let repo: AdminUserDatabaseRepository;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     repo = new AdminUserDatabaseRepository(mockDb as any);
     mockTransaction.mockImplementation(async (fn: (q: typeof mockQuery) => Promise<void>) => {
       await fn(mockQuery);
@@ -134,18 +134,27 @@ describe('AdminUserDatabaseRepository', () => {
   });
 
   describe('removeUsers', () => {
-    it('returns early without querying for empty array', async () => {
-      await repo.removeUsers([]);
+    it('returns 0 without querying for empty array', async () => {
+      const count = await repo.removeUsers([]);
+      expect(count).toBe(0);
       expect(mockQuery).not.toHaveBeenCalled();
     });
 
-    it('builds IN placeholders for multiple ids', async () => {
-      mockQuery.mockResolvedValue(undefined);
-      await repo.removeUsers(['u-1', 'u-2']);
+    it('builds IN placeholders with RETURNING id and returns actual deleted count', async () => {
+      mockQuery.mockResolvedValue([{ id: 'u-1' }, { id: 'u-2' }]);
+      const count = await repo.removeUsers(['u-1', 'u-2']);
       const [sql, params] = mockQuery.mock.calls[0] as [string, string[]];
       expect(sql).toContain('$1');
       expect(sql).toContain('$2');
+      expect(sql).toContain('RETURNING id');
       expect(params).toEqual(['u-1', 'u-2']);
+      expect(count).toBe(2);
+    });
+
+    it('returns actual count when some ids are not found', async () => {
+      mockQuery.mockResolvedValue([{ id: 'u-1' }]);
+      const count = await repo.removeUsers(['u-1', 'ghost-id']);
+      expect(count).toBe(1);
     });
   });
 
@@ -183,6 +192,31 @@ describe('AdminUserDatabaseRepository', () => {
       await repo.listUsers({ ...baseParams, platformRole: 'manager', activeOrganizationId: 'org-1' });
       const [sql] = mockQuery.mock.calls[0] as [string];
       expect(sql).toContain('EXISTS');
+    });
+
+    it('uses parameterized $N for LIMIT and OFFSET — no interpolation', async () => {
+      mockQuery.mockResolvedValue([]);
+      mockQueryOne.mockResolvedValue({ count: '0' });
+      await repo.listUsers({ ...baseParams, limit: 20, offset: 40 });
+      const [sql, params] = mockQuery.mock.calls[0] as [string, unknown[]];
+      expect(sql).not.toContain('LIMIT 20');
+      expect(sql).not.toContain('OFFSET 40');
+      expect(sql).toMatch(/LIMIT \$\d+/);
+      expect(sql).toMatch(/OFFSET \$\d+/);
+      expect(params).toContain(20);
+      expect(params).toContain(40);
+    });
+
+    it('passes only filter params to COUNT query (not LIMIT/OFFSET)', async () => {
+      mockQuery.mockResolvedValue([]);
+      mockQueryOne.mockResolvedValue({ count: '5' });
+      await repo.listUsers({ ...baseParams, searchValue: 'test', limit: 20, offset: 40 });
+      // query call (with pagination params) should have 3 params: search, limit, offset
+      const [, dataParams] = mockQuery.mock.calls[0] as [string, unknown[]];
+      expect(dataParams).toHaveLength(3);
+      // queryOne call (count without pagination) should only have 1 param: search
+      const [, countParams] = mockQueryOne.mock.calls[0] as [string, unknown[]];
+      expect(countParams).toHaveLength(1);
     });
   });
 
@@ -268,6 +302,17 @@ describe('AdminUserDatabaseRepository', () => {
       expect(mockQuery).toHaveBeenCalledTimes(4);
       const memberSql = mockQuery.mock.calls[3][0] as string;
       expect(memberSql).toContain('INSERT INTO member');
+    });
+
+    it('throws a clear error when findUserById returns null after transaction', async () => {
+      mockQuery
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined);
+      mockQueryOne.mockResolvedValue(null);
+      await expect(repo.createUser(baseParams)).rejects.toThrow(
+        'Failed to create user: user not found after transaction',
+      );
     });
   });
 

@@ -293,13 +293,13 @@ psql -d nestjs-api-starter -f src/rbac/migrations/unify-roles.sql
 | DELETE | `/:userId` | Delete user | admin, manager |
 | POST | `/bulk-delete` | Bulk delete users | admin, manager |
 
-### Admin — Sessions (`/api/admin/users`)
+### Admin — Sessions (nested under `/api/admin/users`)
 
 | Method | Endpoint | Description | Required Role |
 |--------|----------|-------------|---------------|
-| GET | `/:userId/sessions` | List user sessions | admin, manager |
-| POST | `/sessions/revoke` | Revoke a session | admin, manager |
-| POST | `/:userId/sessions/revoke-all` | Revoke all user sessions | admin, manager |
+| GET | `/api/admin/users/:userId/sessions` | List user sessions | admin, manager |
+| POST | `/api/admin/users/sessions/revoke` | Revoke a session | admin, manager |
+| POST | `/api/admin/users/:userId/sessions/revoke-all` | Revoke all user sessions | admin, manager |
 
 ### Admin — Organizations (`/api/admin/organizations`)
 

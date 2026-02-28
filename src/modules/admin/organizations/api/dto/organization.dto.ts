@@ -17,7 +17,7 @@ export interface OrganizationRow {
   slug: string;
   logo: string | null;
   metadata: string | null;
-  created_at: Date;
+  createdAt: Date;
 }
 
 export interface Organization {
@@ -34,7 +34,7 @@ export interface MemberRow {
   organization_id: string;
   user_id: string;
   role: string;
-  created_at: Date;
+  createdAt: Date;
 }
 
 export interface OrganizationWithMemberCount extends Organization {
@@ -48,6 +48,6 @@ export function rowToOrganization(row: OrganizationRow): Organization {
     slug: row.slug,
     logo: row.logo,
     metadata: row.metadata ? JSON.parse(row.metadata) : null,
-    createdAt: row.created_at,
+    createdAt: row.createdAt,
   };
 }

@@ -126,10 +126,14 @@ export class AdminUserDatabaseRepository implements IAdminUserRepository {
     await this.db.query('DELETE FROM "user" WHERE id = $1', [userId]);
   }
 
-  async removeUsers(userIds: string[]): Promise<void> {
-    if (userIds.length === 0) return;
+  async removeUsers(userIds: string[]): Promise<number> {
+    if (userIds.length === 0) return 0;
     const placeholders = userIds.map((_, i) => `$${i + 1}`).join(', ');
-    await this.db.query(`DELETE FROM "user" WHERE id IN (${placeholders})`, userIds);
+    const deleted = await this.db.query<{ id: string }>(
+      `DELETE FROM "user" WHERE id IN (${placeholders}) RETURNING id`,
+      userIds,
+    );
+    return deleted.length;
   }
 
   async listUsers(params: ListUsersParams): Promise<{ data: UserRow[]; total: number }> {
@@ -148,18 +152,24 @@ export class AdminUserDatabaseRepository implements IAdminUserRepository {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const countValues = [...values];
+
+    values.push(Math.max(0, Math.trunc(limit)));
+    const limitParam = `$${values.length}`;
+    values.push(Math.max(0, Math.trunc(offset)));
+    const offsetParam = `$${values.length}`;
 
     const data = await this.db.query<UserRow>(
       `SELECT u.id, u.name, u.email, u."emailVerified" as "emailVerified", u.role, u.image, u.banned, u."banReason" as "banReason", u."banExpires" as "banExpires", u."createdAt" as "createdAt", u."updatedAt" as "updatedAt"
        FROM "user" u ${whereSql}
        ORDER BY u."createdAt" DESC
-       LIMIT ${limit} OFFSET ${offset}`,
+       LIMIT ${limitParam} OFFSET ${offsetParam}`,
       values,
     );
 
     const totalRow = await this.db.queryOne<{ count: string }>(
       `SELECT COUNT(*)::text as count FROM "user" u ${whereSql}`,
-      values,
+      countValues,
     );
 
     return { data, total: totalRow ? parseInt(totalRow.count, 10) : 0 };
@@ -192,7 +202,9 @@ export class AdminUserDatabaseRepository implements IAdminUserRepository {
       }
     });
 
-    return (await this.findUserById(userId))!;
+    const created = await this.findUserById(userId);
+    if (!created) throw new Error('Failed to create user: user not found after transaction');
+    return created;
   }
 
   async findSessionByToken(token: string): Promise<{ userId: string } | null> {

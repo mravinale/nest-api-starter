@@ -134,6 +134,18 @@ describe('SessionsController', () => {
         controller.revokeSession(adminSession, { sessionToken: '   ' }),
       ).rejects.toThrow('sessionToken is required');
     });
+
+    it('rejects null sessionToken', async () => {
+      await expect(
+        controller.revokeSession(adminSession, { sessionToken: null as any }),
+      ).rejects.toThrow('sessionToken is required');
+    });
+
+    it('rejects undefined sessionToken', async () => {
+      await expect(
+        controller.revokeSession(adminSession, { sessionToken: undefined as any }),
+      ).rejects.toThrow('sessionToken is required');
+    });
   });
 
   // ─── revokeAll ───────────────────────────────────────────────────────────

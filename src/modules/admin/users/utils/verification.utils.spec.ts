@@ -32,29 +32,67 @@ import { buildVerificationToken, buildVerificationUrl } from './verification.uti
 
 describe('verification.utils', () => {
   describe('buildVerificationToken', () => {
+    const VALID_SECRET = 'a'.repeat(32);
+
     it('should return a valid HS256 JWT string (three dot-separated segments)', async () => {
-      const token = await buildVerificationToken('user@example.com', 'secret', 3600);
+      const token = await buildVerificationToken('user@example.com', VALID_SECRET, 3600);
       expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     });
 
     it('should lowercase the email in the token payload', async () => {
-      const token = await buildVerificationToken('USER@Example.COM', 'secret');
+      const token = await buildVerificationToken('USER@Example.COM', VALID_SECRET);
       const payload = decodeJwt(token);
       expect(payload.email).toBe('user@example.com');
     });
 
     it('should use provided expiresInSeconds in the expiry claim', async () => {
-      const token = await buildVerificationToken('a@b.com', 'secret', 7200);
+      const token = await buildVerificationToken('a@b.com', VALID_SECRET, 7200);
       const payload = decodeJwt(token);
       const delta = (payload.exp as number) - (payload.iat as number);
       expect(delta).toBe(7200);
     });
 
     it('should default expiresInSeconds to 3600', async () => {
-      const token = await buildVerificationToken('a@b.com', 'secret');
+      const token = await buildVerificationToken('a@b.com', VALID_SECRET);
       const payload = decodeJwt(token);
       const delta = (payload.exp as number) - (payload.iat as number);
       expect(delta).toBe(3600);
+    });
+
+    it('should throw when secret is empty', async () => {
+      await expect(buildVerificationToken('a@b.com', '', 3600)).rejects.toThrow(
+        'Secret must be a non-empty string of at least 32 characters',
+      );
+    });
+
+    it('should throw when secret is shorter than 32 characters', async () => {
+      await expect(buildVerificationToken('a@b.com', 'short', 3600)).rejects.toThrow(
+        'Secret must be a non-empty string of at least 32 characters',
+      );
+    });
+
+    it('should throw when expiresInSeconds is zero', async () => {
+      await expect(buildVerificationToken('a@b.com', VALID_SECRET, 0)).rejects.toThrow(
+        'expiresInSeconds must be a positive integer of at least 60',
+      );
+    });
+
+    it('should throw when expiresInSeconds is negative', async () => {
+      await expect(buildVerificationToken('a@b.com', VALID_SECRET, -1)).rejects.toThrow(
+        'expiresInSeconds must be a positive integer of at least 60',
+      );
+    });
+
+    it('should throw when expiresInSeconds is not an integer', async () => {
+      await expect(buildVerificationToken('a@b.com', VALID_SECRET, 3600.5)).rejects.toThrow(
+        'expiresInSeconds must be a positive integer of at least 60',
+      );
+    });
+
+    it('should throw when expiresInSeconds is below minimum (< 60)', async () => {
+      await expect(buildVerificationToken('a@b.com', VALID_SECRET, 59)).rejects.toThrow(
+        'expiresInSeconds must be a positive integer of at least 60',
+      );
     });
   });
 
