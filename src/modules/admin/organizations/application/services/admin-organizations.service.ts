@@ -37,7 +37,6 @@ export const ROLE_HIERARCHY: Record<string, number> = {
   member: 0,
   manager: 1,
   admin: 2,
-  owner: 3,
 };
 
 /**
@@ -54,7 +53,10 @@ export function getRoleLevel(role: string): number {
  */
 export function filterAssignableRoles(allRoleNames: string[], requesterRole: string): string[] {
   const requesterLevel = getRoleLevel(requesterRole);
-  return allRoleNames.filter((r) => getRoleLevel(r) <= requesterLevel);
+  return allRoleNames.filter((r) => {
+    const roleLevel = ROLE_HIERARCHY[r];
+    return roleLevel !== undefined && roleLevel <= requesterLevel;
+  });
 }
 
 /**
@@ -129,7 +131,7 @@ export class AdminOrganizationsService {
 
     const organizationId = this.generateId();
     const memberId = this.generateId();
-    const creatorMemberRole = actor.platformRole === 'admin' ? 'admin' : 'manager';
+    const creatorMemberRole = 'admin';
     const metadataJson = input.metadata === undefined ? null : JSON.stringify(input.metadata);
 
     await this.orgRepo.createOrg({

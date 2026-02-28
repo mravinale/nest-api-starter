@@ -244,6 +244,34 @@ export class DatabaseService implements OnModuleDestroy, OnModuleInit {
           `);
         },
       },
+      {
+        name: '005_enforce_unified_org_member_roles',
+        up: async () => {
+          // Normalize legacy Better Auth owner role residue.
+          await this.query(`UPDATE member SET role = 'admin' WHERE role = 'owner'`);
+          await this.query(`UPDATE invitation SET role = 'admin' WHERE role = 'owner'`);
+
+          // Add constraints as NOT VALID so new writes are protected immediately
+          // without blocking startup on pre-existing unexpected rows.
+          await this.query(`
+            DO $$ BEGIN
+              ALTER TABLE member
+                ADD CONSTRAINT member_role_allowed_values_chk
+                CHECK (role IN ('admin', 'manager', 'member')) NOT VALID;
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
+          `);
+
+          await this.query(`
+            DO $$ BEGIN
+              ALTER TABLE invitation
+                ADD CONSTRAINT invitation_role_allowed_values_chk
+                CHECK (role IN ('admin', 'manager', 'member')) NOT VALID;
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
+          `);
+        },
+      },
     ];
 
     // Run pending migrations

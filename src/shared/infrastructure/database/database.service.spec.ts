@@ -74,7 +74,8 @@ describe('DatabaseService - Migration Tracking', () => {
         .mockResolvedValueOnce({ rows: [{ name: '001' }] }) // hasMigrationRun check 1
         .mockResolvedValueOnce({ rows: [{ name: '002' }] }) // hasMigrationRun check 2
         .mockResolvedValueOnce({ rows: [{ name: '003' }] }) // hasMigrationRun check 3
-        .mockResolvedValueOnce({ rows: [{ name: '004' }] }); // hasMigrationRun check 4
+        .mockResolvedValueOnce({ rows: [{ name: '004' }] }) // hasMigrationRun check 4
+        .mockResolvedValueOnce({ rows: [{ name: '005' }] }); // hasMigrationRun check 5
 
       await service.runMigrations();
 
@@ -89,7 +90,8 @@ describe('DatabaseService - Migration Tracking', () => {
         .mockResolvedValueOnce({ rows: [{ name: '001' }] })
         .mockResolvedValueOnce({ rows: [{ name: '002' }] })
         .mockResolvedValueOnce({ rows: [{ name: '003' }] })
-        .mockResolvedValueOnce({ rows: [{ name: '004' }] });
+        .mockResolvedValueOnce({ rows: [{ name: '004' }] })
+        .mockResolvedValueOnce({ rows: [{ name: '005' }] });
 
       const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
       await service.runMigrations();
@@ -196,7 +198,7 @@ describe('DatabaseService - Migration Tracking', () => {
   });
 
   describe('runMigrations — all pending', () => {
-    it('should run all 4 migrations when none have run, covering all SQL bodies', async () => {
+    it('should run all 5 migrations when none have run, covering all SQL bodies', async () => {
       // CREATE TABLE _migrations
       mockPool.query
         .mockResolvedValueOnce({ rows: [] })  // CREATE TABLE _migrations
@@ -232,9 +234,15 @@ describe('DatabaseService - Migration Tracking', () => {
       // Verify migration 004 ALTER TABLE
       expectQueryWith('ALTER TABLE jwks');
 
+      // Verify migration 005 UPDATE + CHECK constraints
+      expectQueryWith(`UPDATE member SET role = 'admin' WHERE role = 'owner'`);
+      expectQueryWith(`UPDATE invitation SET role = 'admin' WHERE role = 'owner'`);
+      expectQueryWith('member_role_allowed_values_chk');
+      expectQueryWith('invitation_role_allowed_values_chk');
+
       // Should log completed with count
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('4 new'),
+        expect.stringContaining('5 new'),
       );
       consoleSpy.mockRestore();
     });
@@ -252,6 +260,7 @@ describe('DatabaseService - Migration Tracking', () => {
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('002_better_auth_organization_tables applied'));
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('003_core_indexes applied'));
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('004_jwks_expires_at_column applied'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('005_enforce_unified_org_member_roles applied'));
       consoleSpy.mockRestore();
     });
   });

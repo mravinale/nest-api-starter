@@ -121,7 +121,7 @@ describe('AdminOrganizationsService', () => {
   });
 
   describe('create', () => {
-    it('should create organization and manager membership for manager actor', async () => {
+    it('should always assign admin member role to creator regardless of platform role', async () => {
       orgRepo.createOrg.mockResolvedValue(undefined);
       orgRepo.findById.mockResolvedValue({ id: 'org-2', name: 'New Org', slug: 'new-org', logo: null, metadata: null, created_at: new Date(), member_count: '0' });
 
@@ -138,7 +138,9 @@ describe('AdminOrganizationsService', () => {
 
       expect(created.name).toBe('New Org');
       expect(created.slug).toBe('new-org');
-      expect(orgRepo.createOrg).toHaveBeenCalledTimes(1);
+      expect(orgRepo.createOrg).toHaveBeenCalledWith(
+        expect.objectContaining({ actorRole: 'admin' }),
+      );
     });
 
     it('should reject duplicate organization slug', async () => {
@@ -701,10 +703,13 @@ describe('AdminOrganizationsService', () => {
 // Pure function unit tests (no DI needed)
 describe('Role Hierarchy Utilities', () => {
   describe('ROLE_HIERARCHY', () => {
-    it('should have member < manager < admin < owner', () => {
+    it('should have member < manager < admin', () => {
       expect(ROLE_HIERARCHY.member).toBeLessThan(ROLE_HIERARCHY.manager);
       expect(ROLE_HIERARCHY.manager).toBeLessThan(ROLE_HIERARCHY.admin);
-      expect(ROLE_HIERARCHY.admin).toBeLessThan(ROLE_HIERARCHY.owner);
+    });
+
+    it('should not include owner role', () => {
+      expect(ROLE_HIERARCHY['owner']).toBeUndefined();
     });
   });
 
@@ -713,7 +718,10 @@ describe('Role Hierarchy Utilities', () => {
       expect(getRoleLevel('member')).toBe(0);
       expect(getRoleLevel('manager')).toBe(1);
       expect(getRoleLevel('admin')).toBe(2);
-      expect(getRoleLevel('owner')).toBe(3);
+    });
+
+    it('should return 0 for owner (now an unknown role)', () => {
+      expect(getRoleLevel('owner')).toBe(0);
     });
 
     it('should return 0 for unknown roles', () => {
@@ -737,13 +745,17 @@ describe('Role Hierarchy Utilities', () => {
       expect(filterAssignableRoles(allRoles, 'member')).toEqual(['member']);
     });
 
-    it('owner should assign all roles including admin', () => {
-      const rolesWithOwner = ['owner', 'admin', 'manager', 'member'];
-      expect(filterAssignableRoles(rolesWithOwner, 'owner')).toEqual(rolesWithOwner);
+    it('owner requester role defaults to level 0 — can only assign member', () => {
+      expect(filterAssignableRoles(allRoles, 'owner')).toEqual(['member']);
     });
 
     it('unknown role should only assign member-level roles', () => {
       expect(filterAssignableRoles(allRoles, 'unknown')).toEqual(['member']);
+    });
+
+    it('should filter out unknown role names from input list', () => {
+      const rolesWithOwner = ['owner', 'admin', 'manager', 'member'];
+      expect(filterAssignableRoles(rolesWithOwner, 'admin')).toEqual(['admin', 'manager', 'member']);
     });
 
     it('should handle empty input', () => {
