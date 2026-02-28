@@ -74,7 +74,8 @@ describe('DatabaseService - Migration Tracking', () => {
         .mockResolvedValueOnce({ rows: [{ name: '001' }] }) // hasMigrationRun check 1
         .mockResolvedValueOnce({ rows: [{ name: '002' }] }) // hasMigrationRun check 2
         .mockResolvedValueOnce({ rows: [{ name: '003' }] }) // hasMigrationRun check 3
-        .mockResolvedValueOnce({ rows: [{ name: '004' }] }); // hasMigrationRun check 4
+        .mockResolvedValueOnce({ rows: [{ name: '004' }] }) // hasMigrationRun check 4
+        .mockResolvedValueOnce({ rows: [{ name: '005' }] }); // hasMigrationRun check 5
 
       await service.runMigrations();
 
@@ -89,7 +90,8 @@ describe('DatabaseService - Migration Tracking', () => {
         .mockResolvedValueOnce({ rows: [{ name: '001' }] })
         .mockResolvedValueOnce({ rows: [{ name: '002' }] })
         .mockResolvedValueOnce({ rows: [{ name: '003' }] })
-        .mockResolvedValueOnce({ rows: [{ name: '004' }] });
+        .mockResolvedValueOnce({ rows: [{ name: '004' }] })
+        .mockResolvedValueOnce({ rows: [{ name: '005' }] });
 
       const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
       await service.runMigrations();
