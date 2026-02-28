@@ -1,3 +1,32 @@
+import { jest } from '@jest/globals';
+
+jest.mock('jose', () => {
+  const b64url = (s: string) => Buffer.from(s).toString('base64url');
+  return {
+    SignJWT: class {
+      private _p: Record<string, unknown>;
+      private _h: Record<string, unknown> = { alg: 'HS256' };
+      private _iat = 0;
+      private _expiresIn = 3600;
+      constructor(payload: Record<string, unknown>) { this._p = payload; }
+      setProtectedHeader(h: Record<string, unknown>) { this._h = h; return this; }
+      setIssuedAt() { this._iat = Math.floor(Date.now() / 1000); return this; }
+      setExpirationTime(e: string) { this._expiresIn = parseInt(e, 10); return this; }
+      async sign(_secret: unknown): Promise<string> {
+        const iat = this._iat;
+        const exp = iat + this._expiresIn;
+        const hdr = b64url(JSON.stringify(this._h));
+        const pl = b64url(JSON.stringify({ ...this._p, iat, exp }));
+        return `${hdr}.${pl}.fakesig`;
+      }
+    },
+    decodeJwt: (token: string) => {
+      const [, p] = token.split('.');
+      return JSON.parse(Buffer.from(p, 'base64url').toString());
+    },
+  };
+});
+
 import { decodeJwt } from 'jose';
 import { buildVerificationToken, buildVerificationUrl } from './verification.utils';
 
