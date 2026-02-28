@@ -35,10 +35,18 @@ describe('admin.utils', () => {
       expect(getPlatformRole({ user: { role: 'something-else' } } as any)).toBe('member');
     });
 
-    it('should handle role arrays', () => {
+    it('should handle role arrays — admin wins', () => {
+      expect(getPlatformRole({ user: { role: ['admin', 'member'] } } as any)).toBe('admin');
+    });
+
+    it('should handle role arrays — manager when no admin', () => {
       expect(getPlatformRole({ user: { role: ['manager', 'member'] } } as any)).toBe(
         'manager',
       );
+    });
+
+    it('should return member for role string member', () => {
+      expect(getPlatformRole({ user: { role: 'member' } } as any)).toBe('member');
     });
   });
 
