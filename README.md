@@ -103,42 +103,52 @@ curl http://localhost:3000/api/auth/ok
 
 ```
 src/
-├── auth.ts                    # Better Auth configuration
-├── permissions.ts             # Access control definitions
-├── main.ts                    # Application entry point
-├── app.module.ts              # Main module
+├── auth.ts                        # Better Auth configuration (protected boundary)
+├── main.ts                        # Application entry point
+├── app.module.ts                  # Root module
 │
-├── common/                    # Shared utilities
-│   ├── guards/                # Auth guards (RolesGuard, OrgRoleGuard)
-│   └── decorators/            # Custom decorators (@Roles, @OrgRoles)
+├── shared/                        # Cross-cutting concerns
+│   ├── config/                    # Environment configuration
+│   ├── email/                     # Email service (Resend)
+│   ├── guards/                    # RolesGuard, PermissionsGuard
+│   ├── decorators/                # @Roles, @RequirePermissions
+│   └── infrastructure/database/   # DatabaseService, TypeORM config
 │
-├── config/                    # Configuration module
-│   └── config.service.ts      # Environment variables
-│
-├── database/                  # Database module
-│   ├── database.service.ts    # PostgreSQL connection
-│   └── migrations/            # SQL migration files
-│       ├── 001_initial_schema.sql
-│       ├── 002_create_test_admin.sql
-│       └── README.md
-│
-├── email/                     # Email module (Resend)
-│   └── email.service.ts       # Email sending
-│
-├── organization/              # Organization module
-│   ├── controllers/           # Org impersonation endpoints
-│   └── services/              # Org impersonation logic
-│
-├── platform-admin/            # Platform admin module
-│   ├── controllers/           # Admin org management endpoints
-│   └── services/              # Admin org management logic
-│
-└── rbac/                      # RBAC module
-    ├── rbac.controller.ts     # Roles & permissions endpoints
-    ├── rbac.migration.ts      # Auto-seeds roles on startup
-    ├── role.service.ts        # Role CRUD operations
-    └── permission.service.ts  # Permission management
+└── modules/
+    └── admin/                     # Admin module (all platform administration)
+        ├── admin.module.ts        # Wires all sub-domains
+        ├── index.ts               # Barrel exports
+        ├── utils/                 # Shared admin utilities
+        │
+        ├── users/                 # User management sub-domain
+        │   ├── api/controllers/   # CRUD, roles, banning, password endpoints
+        │   ├── application/services/
+        │   ├── domain/repositories/
+        │   └── infrastructure/persistence/repositories/
+        │
+        ├── sessions/              # Session management sub-domain
+        │   ├── api/controllers/   # List, revoke, revoke-all endpoints
+        │   ├── application/services/
+        │   ├── domain/repositories/
+        │   └── infrastructure/persistence/repositories/
+        │
+        ├── organizations/         # Organization management sub-domain
+        │   ├── api/controllers/   # Org CRUD, members, impersonation endpoints
+        │   ├── application/services/
+        │   ├── domain/repositories/
+        │   └── infrastructure/persistence/repositories/
+        │
+        └── rbac/                  # RBAC sub-domain (@Global module)
+            ├── rbac.module.ts     # Separate @Global NestJS module
+            ├── rbac.migration.ts  # Auto-seeds roles on startup
+            ├── api/controllers/   # Roles & permissions endpoints
+            ├── application/services/
+            ├── domain/entities/
+            ├── domain/repositories/
+            └── infrastructure/persistence/
 ```
+
+Each sub-domain follows a **layered architecture**: `api/` → `application/` → `domain/` → `infrastructure/`.
 
 ---
 
@@ -267,26 +277,46 @@ psql -d nestjs-api-starter -f src/rbac/migrations/unify-roles.sql
 | POST | `/reject-invitation` | Reject invitation |
 | DELETE | `/remove-member` | Remove member |
 
-### Admin (`/api/auth/admin`)
+### Admin — Users (`/api/admin/users`)
 
 | Method | Endpoint | Description | Required Role |
 |--------|----------|-------------|---------------|
-| GET | `/list-users` | List all users | admin |
-| POST | `/ban-user` | Ban user | admin |
-| POST | `/unban-user` | Unban user | admin |
-| POST | `/set-role` | Change user role | admin |
-| POST | `/impersonate-user` | Impersonate user | admin |
-| POST | `/stop-impersonating` | Stop impersonation | admin |
+| GET | `/` | List users (paginated, searchable) | admin, manager |
+| GET | `/create-metadata` | Get roles & orgs for user creation | admin, manager |
+| GET | `/:userId/capabilities` | Get allowed actions for target user | admin, manager |
+| POST | `/` | Create user | admin, manager |
+| PUT | `/:userId` | Update user | admin, manager |
+| PUT | `/:userId/role` | Change user role | admin, manager |
+| POST | `/:userId/ban` | Ban user | admin, manager |
+| POST | `/:userId/unban` | Unban user | admin, manager |
+| POST | `/:userId/password` | Set user password | admin, manager |
+| DELETE | `/:userId` | Delete user | admin, manager |
+| POST | `/bulk-delete` | Bulk delete users | admin, manager |
 
-### Platform Admin (`/api/platform-admin`)
+### Admin — Sessions (nested under `/api/admin/users`)
 
 | Method | Endpoint | Description | Required Role |
 |--------|----------|-------------|---------------|
-| GET | `/organizations` | List all organizations | admin |
-| GET | `/organizations/:id` | Get organization details | admin |
-| PUT | `/organizations/:id` | Update organization | admin |
-| DELETE | `/organizations/:id` | Delete organization | admin |
-| GET | `/organizations/:id/members` | Get org members | admin |
+| GET | `/api/admin/users/:userId/sessions` | List user sessions | admin, manager |
+| POST | `/api/admin/users/sessions/revoke` | Revoke a session | admin, manager |
+| POST | `/api/admin/users/:userId/sessions/revoke-all` | Revoke all user sessions | admin, manager |
+
+### Admin — Organizations (`/api/admin/organizations`)
+
+| Method | Endpoint | Description | Required Role |
+|--------|----------|-------------|---------------|
+| GET | `/` | List all organizations (paginated) | admin, manager |
+| GET | `/:id` | Get organization details | admin, manager |
+| PUT | `/:id` | Update organization | admin, manager |
+| DELETE | `/:id` | Delete organization | admin |
+| GET | `/:id/members` | Get org members | admin, manager |
+
+### Admin — Org Impersonation (`/api/organization`)
+
+| Method | Endpoint | Description | Required Role |
+|--------|----------|-------------|---------------|
+| POST | `/:orgId/impersonate` | Impersonate org member | admin, manager |
+| POST | `/stop-impersonating` | Stop impersonation | any |
 
 ### RBAC (`/api/rbac`)
 
@@ -298,13 +328,6 @@ psql -d nestjs-api-starter -f src/rbac/migrations/unify-roles.sql
 | DELETE | `/roles/:id` | Delete role | admin |
 | GET | `/permissions` | List all permissions | any |
 | PUT | `/roles/:id/permissions` | Assign permissions | admin |
-
-### Org Impersonation (`/api/organization`)
-
-| Method | Endpoint | Description | Required Role |
-|--------|----------|-------------|---------------|
-| POST | `/:orgId/impersonate` | Impersonate org member | admin, manager |
-| POST | `/stop-impersonating` | Stop impersonation | any |
 
 ---
 
@@ -346,13 +369,18 @@ npx playwright test --headed --workers=1
 
 When test-recipient guardrail is active (default in test contexts), email recipients must use Resend test addresses such as `delivered@resend.dev` or `delivered+label@resend.dev`.
 
-**Test Coverage (123 tests):**
+**Unit Tests (409 tests, 25 suites):**
+- Admin users: CRUD, roles, banning, password management
+- Admin sessions: list, revoke, revoke-all
+- Admin organizations: CRUD, members, invitations, impersonation
+- RBAC: roles, permissions, migration
+- Shared guards: permissions, roles
+- Config, database, email services
+
+**E2E Tests (40 tests, 3 suites):**
 - Authentication flows (signup, login, password reset)
-- Admin panel access and navigation
-- Role-based access control (Admin/Manager/Member)
-- Organization management
-- RBAC permissions
-- API protection
+- Admin panel (users, sessions, organizations)
+- Role-based access control, RBAC permissions, impersonation
 
 ---
 
@@ -378,25 +406,19 @@ nest g service my-feature
 
 ### Protecting Routes
 
-**By Platform Role:**
+**By Platform Role + Permission:**
 ```typescript
-@Controller('admin')
-@UseGuards(RolesGuard)
-export class AdminController {
-  @Get('users')
-  @Roles('admin')
+@Controller('api/admin/users')
+@UseGuards(RolesGuard, PermissionsGuard)
+@Roles('admin', 'manager')
+export class AdminUsersController {
+  @Get()
+  @RequirePermissions('user:read')
   listUsers() { ... }
-}
-```
 
-**By Organization Role:**
-```typescript
-@Controller('org/:orgId')
-@UseGuards(OrgRoleGuard)
-export class OrgController {
-  @Put('settings')
-  @OrgRoles('admin', 'manager')
-  updateSettings() { ... }
+  @Post()
+  @RequirePermissions('user:create')
+  createUser() { ... }
 }
 ```
 

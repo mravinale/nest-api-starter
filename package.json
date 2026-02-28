@@ -26,6 +26,7 @@
     "@nestjs/common": "^11.0.17",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/typeorm": "^11.0.0",
     "@thallesp/nestjs-better-auth": "^2.2.0",
     "better-auth": "^1.4.3",
     "better-sqlite3": "^12.4.6",
@@ -33,7 +34,8 @@
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.5.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.28"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -76,7 +78,8 @@
       "^.+\\.(t|j)s$": [
         "ts-jest",
         {
-          "useESM": true
+          "useESM": true,
+          "tsconfig": { "module": "ESNext" }
         }
       ]
     },
@@ -101,7 +104,9 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
-    "setupFiles": ["<rootDir>/../test/setup.ts"]
+    "setupFiles": [
+      "<rootDir>/../test/setup.ts"
+    ]
   },
   "pnpm": {
     "onlyBuiltDependencies": [

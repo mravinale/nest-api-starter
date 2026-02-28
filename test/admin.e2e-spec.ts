@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
-import { resendTestEmail, uniqueResendDeliveredEmail } from '../src/common/resend-test-email';
+import { resendTestEmail, uniqueResendDeliveredEmail } from '../src/shared/utils/resend-test-email';
 import { getTestHelpers, TestHelpers, TestContext } from './test-helpers';
 
 describe('Admin User Management (e2e)', () => {
