@@ -315,9 +315,8 @@ export class RbacMigrationService implements OnModuleInit {
 
   /**
    * Align Manager role permissions with the intended RBAC matrix.
-   * Adds: role:assign, role:update, user:create, user:delete,
-   *        user:impersonate, user:set-role
-   * Removes: organization:create, organization:update, user:set-password
+   * Adds: role:assign, role:update
+   * Removes: organization:create, organization:update, user:set-password, user:set-role, user:impersonate, user:create, user:delete
    */
   async alignManagerPermissions(): Promise<void> {
     const managerRole = await this.db.queryOne<{ id: string }>(
@@ -328,10 +327,6 @@ export class RbacMigrationService implements OnModuleInit {
     const permissionsToAdd = [
       { resource: 'role', action: 'assign' },
       { resource: 'role', action: 'update' },
-      { resource: 'user', action: 'create' },
-      { resource: 'user', action: 'delete' },
-      { resource: 'user', action: 'impersonate' },
-      { resource: 'user', action: 'set-role' },
     ];
 
     for (const perm of permissionsToAdd) {
@@ -353,6 +348,10 @@ export class RbacMigrationService implements OnModuleInit {
       { resource: 'organization', action: 'create' },
       { resource: 'organization', action: 'update' },
       { resource: 'user', action: 'set-password' },
+      { resource: 'user', action: 'set-role' },
+      { resource: 'user', action: 'impersonate' },
+      { resource: 'user', action: 'create' },
+      { resource: 'user', action: 'delete' },
     ];
 
     for (const perm of permissionsToRemove) {
